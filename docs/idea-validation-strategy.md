@@ -1,195 +1,64 @@
-# Стратегия валидации идеи: x402 Agent Spend Governance
+# Idea Validation Strategy: x402 Agent Spend Governance
 
-## 1. Цель
+## Objective
 
-Проверить, существует ли у команд, использующих AI-агентов и x402, достаточно дорогая проблема управления автономными платежами, чтобы они были готовы установить, интегрировать и оплачивать отдельный governance layer.
+Validate whether teams running AI agents with x402 have a painful, expensive need for an independent control layer that evaluates payment authority before signing and preserves verifiable evidence afterward.
 
-Главная гипотеза:
+## Core hypotheses
 
-> Командам недостаточно самого x402-протокола: им нужен независимый слой, который до подписи платежа проверяет полномочия агента, бюджет, merchant, лимиты скорости и риск операции, а после решения сохраняет проверяемое доказательство.
+- x402 standardizes payment transport, but does not provide organization-level budgets, merchant allowlists, approvals, velocity rules, or audit evidence.
+- Teams do not want autonomous agents to hold unrestricted spending authority.
+- Per-request caps alone are insufficient; operators also need daily/monthly budgets, kill switches, idempotency, and explainable decisions.
+- The buyer is usually a CTO, founder, platform engineer, or security engineer; the user is an AI/backend engineer.
+- A non-custodial SDK and self-hosted or hybrid control plane can differentiate from wallet providers.
 
-## 2. Что именно нужно доказать
+## Target segments
 
-### Проблемные гипотезы
+Prioritize AI SaaS teams buying APIs/data/compute, Solana/Web3 teams adopting x402, API providers exposing paid endpoints, facilitator operators, and platform/security teams managing delegated credentials. Do not prioritize ordinary wallet users or teams that only need checkout.
 
-1. Разработчики опасаются выдавать агенту кошелёк без жёстких лимитов.
-2. Простого лимита на один запрос недостаточно: нужны дневные/месячные бюджеты, allowlist и аварийная остановка.
-3. Командам важно объяснять, почему платёж разрешён или отклонён.
-4. Существующие wallet-провайдеры не закрывают self-hosted, multi-facilitator и audit-требования.
-5. Интеграция должна происходить через middleware/SDK, а не через переписывание агента.
+## Discovery research
 
-### Коммерческие гипотезы
+Conduct at least 15 interviews: five agent builders, four Solana/Web3 developers, three platform/security engineers, and three API/facilitator operators. Begin with their latest real payment incident rather than showing the product.
 
-1. Проблема возникает до появления большого платёжного объёма: её нужно решить на этапе production readiness.
-2. Покупателем является CTO, platform/security engineer или founder, а пользователем — backend/AI engineer.
-3. Первые клиенты предпочтут бесплатный sandbox и self-hosted pilot, после чего могут платить за hosted control plane, support и enterprise features.
-4. Команда заплатит за снижение риска и доказуемость контроля, даже если сами платежи стоят очень дёшево.
+Ask how agents obtain authority, where keys live, which limits exist, how merchants are approved, how duplicate payments are handled, how an operator investigates a disputed payment, which workaround is used, and what budget would be approved.
 
-## 3. Целевые сегменты
+Record facts, frequency, cost, current workaround, and consequences—not enthusiasm for a proposed solution.
 
-Приоритетная выборка:
+## Market research
 
-- AI SaaS-команды, создающие агентов, которые покупают API, данные или compute;
-- Web3/Solana-команды, использующие x402 или планирующие его внедрение;
-- API-провайдеры, которым нужны policy и audit для клиентов-агентов;
-- инфраструктурные и facilitator-команды;
-- security/platform-команды, отвечающие за delegated credentials.
+Maintain a competitor matrix covering x402 SDKs, facilitators, wallet products, allowlists, caps, approvals, kill switches, audit, custody model, supported chains, deployment model, and pricing. The goal is to identify an underserved workflow, not merely list competitors.
 
-Не приоритет: обычные пользователи криптокошельков, NFT-проекты без автономных платежей и команды, которым нужен только checkout без agent governance.
+## Quantitative validation
 
-## 4. Исследование рынка
+After interviews, survey at least 50 relevant respondents. Measure current x402 usage, existing controls, time spent investigating payments, preference for hosted/self-hosted/hybrid deployment, willingness to integrate an SDK, and budget range. The survey validates prevalence; it does not replace interviews.
 
-### Desk research
+## Concierge pilot
 
-Собрать и регулярно обновлять таблицу:
+Connect three teams manually. Install middleware, configure limits and allowlists, run sandbox/devnet payments, review allowed/denied/duplicate/suspicious cases, and deliver an audit report. This validates value and integration effort before building a full platform.
 
-- x402 SDK и facilitator implementations;
-- wallet providers и spending-wallet products;
-- solutions с allowlist, caps, approvals, kill switch и audit;
-- supported chains, custody model, deployment model, pricing;
-- security incidents, failed payments и operator complaints.
+## Prototype smoke test
 
-Результат: карта конкурентов и список незакрытых требований, а не просто перечень компаний.
+The prototype must demonstrate allowed payment, per-payment denial, daily-budget denial, merchant denial, approval above a threshold, idempotency, kill switch, immutable decision evidence, and no private-key handling.
 
-### Интервью
+## Success criteria
 
-Провести минимум 15 интервью:
+The idea is validated when at least 10 of 15 interviews confirm a real problem, five teams agree to test, three connect a workflow, two request continuation after the pilot, policy setup takes under 15 minutes, and at least one prospect discusses a paid pilot.
 
-- 5 AI-agent builders;
-- 4 Web3/Solana developers;
-- 3 platform/security engineers;
-- 3 API/facilitator operators.
+## Stop or pivot criteria
 
-Не показывать решение в начале. Сначала спрашивать о последнем реальном случае, когда агент совершил или почти совершил нежелательный платёж.
+Pivot if most target teams do not use autonomous payments, existing wallet controls fully solve the problem, nobody will connect a sandbox workflow, policy decisions cannot be enforced before signing, or custody requirements make the product unacceptable.
 
-Примеры вопросов:
+## Four-week plan
 
-1. Как агент сейчас получает право платить?
-2. Где хранятся ключи и кто может изменить лимит?
-3. Какие ограничения действуют на один платёж и на день?
-4. Как вы разрешаете нового merchant?
-5. Что происходит при timeout или повторной отправке?
-6. Как вы доказываете аудитору, почему платёж был разрешён?
-7. Сколько времени занимает добавление нового правила?
-8. Какой инцидент с агентом был бы для вас неприемлемым?
-9. Каким решением вы пользуетесь сейчас и чего в нём не хватает?
-10. За что вы реально готовы платить?
+1. **Week 1:** competitor map, recruiting, five interviews.
+2. **Week 2:** seven more interviews, policy evaluator prototype, local sandbox.
+3. **Week 3:** three concierge pilots, latency and false-reject measurements, audit examples.
+4. **Week 4:** remaining interviews, decision memo, MVP scope and deployment model.
 
-Критически важно фиксировать факты, частоту, стоимость и текущий workaround, а не положительные мнения о концепции.
+## Metrics
 
-## 5. Количественная проверка
+Track interview-to-pilot conversion, pilot-to-paid-intent conversion, time-to-first-policy, evaluation latency, false-rejection rate, duplicate-prevention rate, actionable audit findings, active governed agents, and customer-reported avoided-loss scenarios.
 
-После интервью провести опрос минимум на 50 релевантных респондентов. Проверить:
+## Safety constraints
 
-- долю команд, уже имеющих agent payments;
-- долю команд с per-request и daily limits;
-- наличие allowlist и kill switch;
-- время расследования спорного платежа;
-- готовность использовать SDK/proxy;
-- предпочтение hosted, self-hosted или hybrid;
-- диапазон бюджета на governance tooling.
-
-Опрос не заменяет интервью: он измеряет распространённость уже найденных паттернов.
-
-## 6. Concierge MVP
-
-До полноценного продукта вручную подключить 3 команды:
-
-1. интегрировать middleware перед их x402 client;
-2. настроить лимиты и allowlist;
-3. отправить sandbox/testnet платежи;
-4. вручную разобрать разрешённые, отклонённые, повторные и подозрительные платежи;
-5. выдать audit report.
-
-Цель — проверить ценность результата и интеграционный workflow до масштабирования кода.
-
-## 7. Технический smoke test
-
-Собрать минимальный SDK/proxy и проверить:
-
-- успешный разрешённый платёж;
-- отказ по per-payment cap;
-- отказ по daily cap;
-- отказ по merchant allowlist;
-- ручное approval для суммы выше порога;
-- duplicate/idempotency protection;
-- kill switch;
-- неизменяемое событие решения;
-- отсутствие приватного ключа в логах и на сервере.
-
-Проводить только на sandbox/devnet или с тестовыми суммами.
-
-## 8. Критерии подтверждения
-
-Идея считается подтверждённой, если за один цикл получены все условия:
-
-- минимум 10 из 15 интервью подтверждают реальную проблему на основе опыта, а не гипотезы;
-- минимум 5 команд готовы протестировать прототип;
-- минимум 3 команды подключают его к своему workflow;
-- минимум 2 команды просят продолжить после concierge pilot;
-- среднее время добавления policy не превышает 15 минут;
-- решения принимаются до подписи платежа;
-- ни один тестовый сценарий не позволяет обойти лимит через повтор или перезапуск;
-- минимум один потенциальный клиент готов обсуждать платный pilot.
-
-## 9. Критерии остановки или изменения направления
-
-Пересмотреть идею, если:
-
-- большинство целевых команд вообще не используют автономные платежи;
-- команды считают wallet provider достаточным решением;
-- никто не готов дать доступ к sandbox workflow;
-- policy engine не влияет на решение до подписи;
-- требования к custody делают продукт юридически или операционно неприемлемым;
-- конкуренты закрывают все подтверждённые требования без заметного gap.
-
-## 10. План на четыре недели
-
-### Неделя 1 — проблема и рынок
-
-- обновить карту конкурентов;
-- подготовить recruitment message;
-- провести 5 интервью;
-- сформировать словарь pain statements.
-
-### Неделя 2 — discovery и прототип
-
-- провести ещё 5–7 интервью;
-- реализовать policy evaluator и deterministic decision reasons;
-- запустить локальный sandbox.
-
-### Неделя 3 — concierge pilot
-
-- подключить 3 команды или собственных representative workflows;
-- измерить latency, false rejects и integration effort;
-- собрать audit examples.
-
-### Неделя 4 — решение
-
-- провести оставшиеся интервью;
-- сравнить результаты с критериями подтверждения;
-- выбрать hosted, self-hosted или hybrid MVP;
-- написать go/no-go memo и скорректировать PRD.
-
-## 11. Метрики
-
-- interview-to-pilot conversion;
-- pilot-to-paid-intent conversion;
-- time-to-first-policy;
-- policy decision latency;
-- percentage of payments evaluated before signing;
-- false rejection rate;
-- duplicate prevention rate;
-- number of actionable audit findings;
-- weekly active governed agents;
-- customer-reported avoided-loss scenarios.
-
-## 12. Ограничения и этика
-
-- не использовать реальные средства без явного разрешения;
-- не собирать seed phrases или private keys;
-- не хранить bearer tokens в интервью-артефактах;
-- отделять claims от измеренных результатов;
-- не объявлять продукт безопасным только потому, что он отклонил demo-платёж;
-- тестировать сценарии prompt injection и компрометации только в изолированной среде.
-
+Use only sandbox/devnet or explicitly approved tiny amounts. Never collect seed phrases, private keys, or bearer tokens. Separate hypotheses from measured results and never describe a demo rejection as proof of production safety.
