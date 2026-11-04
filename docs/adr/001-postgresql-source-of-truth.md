@@ -1,158 +1,60 @@
-# ADR-001: PostgreSQL как source of truth
+# ADR-001: PostgreSQL as the Source of Truth
 
-- **Статус:** Accepted
-- **Дата:** 2026-11-04
-- **Область:** persistence, budgets, decisions, audit
-- **Связанные документы:** `docs/prd.md`, `docs/system-design.md`
+- **Status:** Accepted
+- **Date:** 2026-11-04
 
-## Контекст
+## Context
 
-Guardrail должен принимать решения о платежах до подписи транзакции и одновременно вести бюджет агента, idempotency state, approval lifecycle и audit evidence.
+Guardrail must evaluate payments before signing while maintaining budgets, idempotency, approvals, settlements, and audit evidence. Concurrent requests must not spend the same budget twice, and a decision must never exist without its reservation and audit record.
 
-Критические операции должны быть согласованными:
+## Decision
 
-1. один idempotency key не должен создать две оплаты;
-2. параллельные запросы не должны превысить daily/per-payment budget;
-3. decision и budget reservation должны либо сохраниться вместе, либо не сохраниться вообще;
-4. settlement evidence не должен превратить неизвестный результат в успешный;
-5. audit event должен ссылаться на ту же policy version и decision, которые реально использовались.
+PostgreSQL 16+ is the authoritative store for workspaces, agents, credential metadata, immutable policy versions, merchants, intents, decisions, budget counters, reservations, approvals, settlements, and audit events.
 
-Система также должна поддерживать сложные tenant-scoped queries: audit filters, policy history, approvals, agent usage и reconciliation of unknown settlements.
-
-## Решение
-
-PostgreSQL 16+ выбирается как authoritative source of truth для:
-
-- workspaces и environments;
-- agents и credential metadata;
-- immutable policy versions;
-- merchants и allowlists;
-- payment intents и idempotency keys;
-- decisions;
-- budget counters и reservations;
-- approvals;
-- settlement evidence;
-- append-only audit events.
-
-Atomic evaluate flow выполняется внутри PostgreSQL transaction:
+Evaluation and reservation use one transaction:
 
 ```text
 BEGIN
-  load idempotent intent if it exists
-  lock relevant budget counter rows FOR UPDATE
+  return an existing intent for the idempotency key, if present
+  lock the relevant budget counter rows
   load active policy and freeze state
-  evaluate normalized intent
-  insert intent and immutable decision
-  reserve budget when outcome is allow/approval_required
-  append audit event
+  evaluate the normalized intent
+  insert the intent and immutable decision
+  reserve budget when applicable
+  append the audit event
 COMMIT
 ```
 
-Если любой шаг не проходит, transaction откатывается. Нельзя иметь decision без соответствующей reservation или reservation без decision.
+Any failed check rolls back the complete operation. Redis may be used for cache or rate limiting, replicas for read-heavy audit queries, and object storage for exports, but none may authorize a payment or replace authoritative budget state.
 
-PostgreSQL является source of truth, но не обязан обслуживать каждый read напрямую:
+## Rationale
 
-- Redis может использоваться как временный cache или distributed rate limiter;
-- read replicas могут обслуживать тяжёлые audit queries;
-- object storage может хранить архивные exports и backup files.
+- ACID transactions provide the required decision/reservation boundary.
+- Unique constraints enforce idempotency and aggregate ordering.
+- Foreign keys and check constraints provide a second safety layer.
+- Relational queries fit tenant-scoped audit, usage, approval, and reconciliation views.
+- Managed PostgreSQL provides mature TLS, backups, PITR, replicas, and role separation.
+- One database keeps the MVP operationally simple.
 
-Ни один из этих компонентов не может единолично разрешать платёж или заменять authoritative budget state.
+## Rejected alternatives
 
-## Почему PostgreSQL
-
-### 1. Транзакционная согласованность
-
-Budget reservation, decision и audit event требуют ACID transaction. PostgreSQL предоставляет row locks, isolation levels, constraints и rollback без отдельного distributed transaction coordinator.
-
-### 2. Уникальность и idempotency на уровне базы
-
-Уникальные ограничения вроде:
-
-```sql
-UNIQUE (workspace_id, agent_id, idempotency_key)
-UNIQUE (aggregate_id, sequence)
-```
-
-защищают от ошибок приложения и race conditions.
-
-### 3. Богатые запросы для governance
-
-Продукту нужны фильтры по agent, merchant, policy version, reason code, status и времени. Реляционная модель подходит для этих запросов лучше, чем key-value storage или только event log.
-
-### 4. Безопасные constraints
-
-Database может enforce-ить foreign keys, non-negative amounts, допустимые statuses и tenant relationships. Это второй защитный слой после Rust domain validation.
-
-### 5. Операционная зрелость
-
-PostgreSQL поддерживает managed hosting, backups, point-in-time recovery, replicas, TLS, role-based access и инструменты миграций.
-
-### 6. Простота MVP
-
-Одна PostgreSQL-инстанция проще для локального Docker Compose, pilot deployment и disaster-recovery rehearsal, чем комбинация нескольких специализированных хранилищ.
-
-## Рассмотренные альтернативы
-
-### Redis как source of truth
-
-**Отклонено.** Redis полезен для ephemeral cache и rate limiting, но неудобен для долговременного audit, сложных tenant queries, immutable history и backup semantics. Redis-only модель также повышает риск потерять budget state при ошибке persistence или неправильном failover.
-
-### MongoDB/document database
-
-**Отклонено для core ledger.** Гибкая schema полезна для raw metadata, но основная модель имеет строгие связи, uniqueness и atomic counters. Реляционные constraints здесь ценнее schema flexibility.
-
-### Kafka/event log как source of truth
-
-**Отклонено для MVP.** Event streaming хорошо подходит для high-throughput integration, но сам по себе не даёт удобного transaction boundary между budget reservation, decision и audit. Kafka может появиться позже для outbound analytics, но не должна первой принимать payment decision.
-
-### Blockchain как source of truth
-
-**Отклонено.** x402 settlement происходит on-chain, но policy decision, daily budget, private workspace state и approval workflow не должны зависеть от latency, fees или доступности конкретной сети. Blockchain используется для payment evidence, а не для всей control-plane state.
-
-### Только append-only event store
-
-**Отклонено для MVP.** Event sourcing возможен, но добавляет сложность projection rebuild, idempotent command handling и operational recovery. Audit chain поверх PostgreSQL даёт достаточную tamper evidence без преждевременной сложности.
+Redis-only, MongoDB, Kafka/event log, blockchain, and event-sourcing-only designs were rejected for the core ledger. They can serve specialized purposes later, but do not provide the simplest authoritative transaction boundary for budgets, decisions, and audit.
 
 ## Consequences
 
-### Положительные
+Positive: atomic reservations, strong idempotency, simple local Docker setup, mature backup/restore tooling, and useful audit queries.
 
-- atomic budget reservation;
-- понятные migrations и rollback strategy;
-- database-enforced tenant isolation;
-- удобные audit и reporting queries;
-- простая local development story;
-- зрелые backup/restore инструменты.
+Negative: PostgreSQL is on the critical evaluation path; high write volume eventually requires partitioning and replicas; audit retention increases storage; multi-region active-active writes are not an MVP feature; database outage must fail closed for new payments.
 
-### Отрицательные
+## Safeguards
 
-- PostgreSQL становится критической зависимостью для evaluate path;
-- высокие write rates потребуют partitioning, replicas и connection-pool tuning;
-- audit retention может быстро увеличить storage;
-- distributed multi-region writes не являются частью MVP;
-- database outage приводит к fail-closed отказу новых платежей.
+1. Separate runtime and migration roles.
+2. Use TLS and secret-manager-managed credentials.
+3. Keep authoritative checks on the primary, never on a stale read replica.
+4. Test concurrent reservations and rollback behavior.
+5. Partition and archive old audit data.
+6. Rehearse backup restore before production release.
 
-## Operational safeguards
+## Revisit when
 
-1. `DATABASE_URL` и database credentials находятся только в secret manager.
-2. API использует отдельную least-privilege role.
-3. Migration role отделена от runtime role.
-4. Включены TLS, backups и point-in-time recovery.
-5. Budget transaction покрыта concurrency tests.
-6. Для больших audit tables предусмотрены monthly partitions.
-7. Read replicas не используются для authoritative decision или budget checks.
-8. Redis cache никогда не является основанием для `allow`.
-9. Restore test выполняется до production release.
-
-## Когда пересмотреть решение
-
-ADR нужно пересмотреть, если:
-
-- требуется более 10,000 decision evaluations/sec на tenant;
-- multi-region active-active writes становятся обязательными;
-- audit retention превышает возможности PostgreSQL partitioning;
-- customer требует deployment без relational database;
-- реальные benchmarks показывают, что PostgreSQL transaction latency нарушает SLO.
-
-Даже тогда PostgreSQL может остаться authoritative ledger, а высокопроизводительный evaluator — использовать отдельный read model с безопасной revalidation перед выдачей decision token.
-
+Revisit this decision if active-active multi-region writes, more than 10,000 evaluations/sec per tenant, or storage volumes beyond practical PostgreSQL partitioning become real requirements.
