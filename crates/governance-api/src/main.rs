@@ -6,11 +6,13 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::Response,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use governance_core::HealthStatus;
-use models::{AgentResponse, AuditEventResponse, ErrorBody, ErrorEnvelope, PolicySummary};
+use models::{
+    AgentResponse, AuditEventResponse, ErrorBody, ErrorEnvelope, PolicySummary, SettlementRequest,
+};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::{env, net::SocketAddr};
@@ -109,6 +111,31 @@ async fn list_audit_events(
     Ok(Json(events))
 }
 
+async fn create_settlement(
+    State(pool): State<PgPool>,
+    headers: HeaderMap,
+    Json(request): Json<SettlementRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
+    let principal = auth::authenticate(&pool, &headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let intent_id: Option<Uuid> = sqlx::query_scalar("SELECT i.intent_id FROM payments.decisions d JOIN payments.payment_intents i ON i.intent_id = d.intent_id WHERE d.decision_id = $1 AND i.workspace_id = $2")
+        .bind(request.decision_id).bind(principal.workspace_id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let intent_id = intent_id.ok_or(StatusCode::NOT_FOUND)?;
+    let outcome = match request.status {
+        models::SettlementStatus::Settled => "settled",
+        models::SettlementStatus::Failed => "failed",
+        models::SettlementStatus::Unknown => "unknown",
+    };
+    let id = Uuid::now_v7();
+    let settlement_id: Uuid = sqlx::query_scalar("INSERT INTO payments.settlements (settlement_id, intent_id, decision_id, transaction_signature, facilitator_status, outcome, evidence) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (decision_id, transaction_signature) DO UPDATE SET evidence = payments.settlements.evidence RETURNING settlement_id")
+        .bind(id).bind(intent_id).bind(request.decision_id).bind(request.transaction_signature).bind(outcome).bind(outcome).bind(request.evidence).fetch_one(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({"settlement_id": settlement_id, "outcome": outcome})),
+    ))
+}
+
 async fn not_found(
     axum::extract::Extension(request_id): axum::extract::Extension<String>,
 ) -> (StatusCode, Json<ErrorEnvelope>) {
@@ -155,6 +182,7 @@ async fn main() {
         .route("/v1/agents", get(list_agents))
         .route("/v1/policies", get(list_policies))
         .route("/v1/audit/events", get(list_audit_events))
+        .route("/v1/settlements", post(create_settlement))
         .with_state(pool.clone())
         .layer(RequestBodyLimitLayer::new(256 * 1024))
         .layer(TimeoutLayer::with_status_code(
