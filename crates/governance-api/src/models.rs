@@ -57,6 +57,8 @@ pub struct SettlementRequest {
     pub status: SettlementStatus,
     pub transaction_signature: Option<String>,
     pub evidence: serde_json::Value,
+    pub observed_amount_atomic: Option<String>,
+    pub observed_pay_to: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

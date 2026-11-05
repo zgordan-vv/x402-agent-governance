@@ -173,17 +173,32 @@ async fn create_settlement(
     let principal = auth::authenticate(&pool, &headers)
         .await
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let intent_id: Option<Uuid> = sqlx::query_scalar("SELECT i.intent_id FROM payments.decisions d JOIN payments.payment_intents i ON i.intent_id = d.intent_id WHERE d.decision_id = $1 AND i.workspace_id = $2")
-        .bind(request.decision_id).bind(principal.workspace_id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let intent_id = intent_id.ok_or(StatusCode::NOT_FOUND)?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (intent_id,expected_amount,expected_pay_to,decision_outcome):(Uuid,String,Option<String>,String)=sqlx::query_as("SELECT i.intent_id,i.amount_atomic::text,i.merchant->>'pay_to',d.outcome FROM payments.decisions d JOIN payments.payment_intents i ON i.intent_id=d.intent_id WHERE d.decision_id=$1 AND i.workspace_id=$2 FOR UPDATE")
+        .bind(request.decision_id).bind(principal.workspace_id).fetch_optional(&mut *tx).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    if decision_outcome != "allow" {
+        return Err(StatusCode::CONFLICT);
+    }
     if let Some(existing) = sqlx::query_scalar::<_, Uuid>("SELECT settlement_id FROM payments.settlements WHERE decision_id=$1 AND evidence->>'idempotency_key'=$2")
-        .bind(request.decision_id).bind(&request.idempotency_key).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        .bind(request.decision_id).bind(&request.idempotency_key).fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        tx.rollback().await.ok();
         return Ok((StatusCode::OK, Json(serde_json::json!({"settlement_id":existing,"idempotent_replay":true}))));
     }
-    let outcome = match request.status {
+    let requested_outcome = match request.status {
         models::SettlementStatus::Settled => "settled",
         models::SettlementStatus::Failed => "failed",
         models::SettlementStatus::Unknown => "unknown",
+    };
+    let mismatch = requested_outcome == "settled"
+        && (request.observed_amount_atomic.as_deref() != Some(expected_amount.as_str())
+            || request.observed_pay_to.as_deref() != expected_pay_to.as_deref());
+    let outcome = if mismatch {
+        "mismatch"
+    } else {
+        requested_outcome
     };
     let id = Uuid::now_v7();
     let mut evidence = request.evidence;
@@ -192,8 +207,30 @@ async fn create_settlement(
         "idempotency_key".into(),
         serde_json::Value::String(request.idempotency_key),
     );
-    let settlement_id: Uuid = sqlx::query_scalar("INSERT INTO payments.settlements (settlement_id, intent_id, decision_id, transaction_signature, facilitator_status, outcome, evidence) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (decision_id, transaction_signature) DO UPDATE SET evidence = payments.settlements.evidence RETURNING settlement_id")
-        .bind(id).bind(intent_id).bind(request.decision_id).bind(request.transaction_signature).bind(outcome).bind(outcome).bind(evidence).fetch_one(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    object.insert(
+        "expected_amount_atomic".into(),
+        serde_json::Value::String(expected_amount.clone()),
+    );
+    let settlement_id: Uuid = sqlx::query_scalar("INSERT INTO payments.settlements (settlement_id,intent_id,decision_id,transaction_signature,facilitator_status,observed_amount_atomic,observed_pay_to,outcome,evidence) VALUES($1,$2,$3,$4,$5,$6::numeric,$7,$8,$9) ON CONFLICT (decision_id,transaction_signature) DO UPDATE SET evidence=payments.settlements.evidence RETURNING settlement_id")
+        .bind(id).bind(intent_id).bind(request.decision_id).bind(request.transaction_signature).bind(requested_outcome).bind(request.observed_amount_atomic).bind(request.observed_pay_to).bind(outcome).bind(evidence).fetch_one(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let reservation_status = match outcome {
+        "settled" => "settled",
+        "failed" => "failed",
+        _ => "unknown",
+    };
+    let reservation=sqlx::query("UPDATE payments.budget_reservations SET status=$1, finalized_at=CASE WHEN $1 IN ('settled','failed') THEN now() ELSE finalized_at END WHERE decision_id=$2 AND status='reserved'").bind(reservation_status).bind(request.decision_id).execute(&mut *tx).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    if reservation.rows_affected() != 1 && outcome != "mismatch" {
+        return Err(StatusCode::CONFLICT);
+    }
+    if outcome == "failed" {
+        sqlx::query("UPDATE payments.budget_counters c SET reserved_atomic=GREATEST(0,reserved_atomic-r.amount_atomic) FROM payments.budget_reservations r WHERE r.decision_id=$1 AND c.agent_id=(SELECT agent_id FROM payments.payment_intents WHERE intent_id=$2) AND c.window_type='daily' AND c.window_start=date_trunc('day',now())").bind(request.decision_id).bind(intent_id).execute(&mut *tx).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    if outcome == "unknown" || outcome == "mismatch" {
+        sqlx::query("INSERT INTO jobs.work_items(job_id,job_type,payload) VALUES($1,'settlement_reconciliation',$2)").bind(Uuid::now_v7()).bind(serde_json::json!({"settlement_id":settlement_id,"decision_id":request.decision_id})).execute(&mut *tx).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({"settlement_id": settlement_id, "outcome": outcome})),
