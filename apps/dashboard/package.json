@@ -1,0 +1,6 @@
+{
+  "name": "@x402-agent-governance/dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc --noEmit" }
+}
