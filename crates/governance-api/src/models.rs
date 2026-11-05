@@ -58,6 +58,14 @@ pub struct ExportRequest {
     pub privacy_profile: PrivacyProfile,
 }
 
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct AgentResponse {
+    pub agent_id: Uuid,
+    pub environment_id: Uuid,
+    pub name: String,
+    pub status: String,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrivacyProfile {
