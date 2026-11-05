@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod models;
 
 use axum::{
     extract::State,
@@ -9,23 +10,13 @@ use axum::{
     Json, Router,
 };
 use governance_core::HealthStatus;
+use models::{ErrorBody, ErrorEnvelope};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::{env, net::SocketAddr};
 use tower_http::{limit::RequestBodyLimitLayer, timeout::TimeoutLayer};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
-
-#[derive(serde::Serialize)]
-struct ErrorEnvelope {
-    error: ErrorBody,
-}
-#[derive(serde::Serialize)]
-struct ErrorBody {
-    code: &'static str,
-    message: &'static str,
-    request_id: String,
-}
 
 async fn request_id(mut request: axum::extract::Request, next: Next) -> Response {
     let id = request
