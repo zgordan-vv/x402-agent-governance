@@ -4,6 +4,22 @@ CREATE SCHEMA IF NOT EXISTS control;
 CREATE SCHEMA IF NOT EXISTS policy;
 CREATE SCHEMA IF NOT EXISTS payments;
 CREATE SCHEMA IF NOT EXISTS audit;
+CREATE SCHEMA IF NOT EXISTS jobs;
+
+CREATE TABLE jobs.work_items (
+    job_id uuid PRIMARY KEY,
+    job_type text NOT NULL,
+    payload jsonb NOT NULL DEFAULT '{}',
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'leased', 'complete', 'retryable', 'dead_letter')),
+    attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    available_at timestamptz NOT NULL DEFAULT now(),
+    lease_until timestamptz,
+    last_error text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX jobs_available_idx ON jobs.work_items (status, available_at);
 
 CREATE TABLE control.workspaces (
     workspace_id uuid PRIMARY KEY,

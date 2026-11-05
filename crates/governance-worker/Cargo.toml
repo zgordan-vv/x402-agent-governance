@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono.workspace = true
+serde_json.workspace = true
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "chrono", "json", "uuid", "migrate"] }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+uuid.workspace = true

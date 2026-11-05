@@ -530,9 +530,13 @@ dependencies = [
 name = "governance-worker"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "serde_json",
+ "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
