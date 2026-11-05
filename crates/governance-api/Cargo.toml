@@ -7,9 +7,11 @@ license.workspace = true
 [dependencies]
 axum.workspace = true
 argon2.workspace = true
+chrono.workspace = true
 governance-core = { path = "../governance-core" }
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "uuid", "chrono", "json", "migrate", "macros"] }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

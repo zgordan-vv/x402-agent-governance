@@ -1,9 +1,10 @@
 pub mod auth;
 
-use axum::{http::StatusCode, routing::get, Json, Router};
+use axum::{extract::State, http::{HeaderMap, StatusCode}, routing::get, Json, Router};
 use tower_http::{limit::RequestBodyLimitLayer, timeout::TimeoutLayer};
 use governance_core::HealthStatus;
 use sqlx::postgres::PgPoolOptions;
+use sqlx::PgPool;
 use std::{env, net::SocketAddr};
 use tracing_subscriber::EnvFilter;
 
@@ -15,6 +16,11 @@ async fn ready() -> Json<HealthStatus> {
     Json(HealthStatus { service: "governance-api".into(), ready: true })
 }
 
+async fn me(State(pool): State<PgPool>, headers: HeaderMap) -> Result<Json<serde_json::Value>, StatusCode> {
+    let principal = auth::authenticate(&pool, &headers).await.map_err(|_| StatusCode::UNAUTHORIZED)?;
+    Ok(Json(serde_json::json!({ "workspace_id": principal.workspace_id, "agent_id": principal.agent_id, "environment_id": principal.environment_id, "roles": principal.roles.iter().map(|role| format!("{role:?}")).collect::<Vec<_>>() })))
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -24,9 +30,9 @@ async fn main() {
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL is required");
     let pool = PgPoolOptions::new().max_connections(10).acquire_timeout(std::time::Duration::from_secs(5)).connect(&database_url).await.expect("connect to PostgreSQL");
     sqlx::migrate!("../../migrations").run(&pool).await.expect("run database migrations");
-    let app = Router::new().route("/health/live", get(live)).route("/health/ready", get(ready))
+    let app = Router::new().route("/health/live", get(live)).route("/health/ready", get(ready)).route("/v1/me", get(me)).with_state(pool.clone())
         .layer(RequestBodyLimitLayer::new(256 * 1024))
-        .layer(TimeoutLayer::with_status_code(std::time::Duration::from_secs(10), StatusCode::REQUEST_TIMEOUT))
+        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, std::time::Duration::from_secs(10)))
         .fallback(|| async { (StatusCode::NOT_FOUND, "not found") });
     let listener = tokio::net::TcpListener::bind(address).await.expect("bind API listener");
     println!("governance-api listening on {address}");

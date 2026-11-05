@@ -3,6 +3,7 @@ use governance_core::{AgentId, EnvironmentId, WorkspaceId};
 use argon2::{password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString}, Argon2};
 use thiserror::Error;
 use uuid::Uuid;
+use sqlx::PgPool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role { Owner, SecurityAdmin, Operator, Approver, Auditor }
@@ -58,6 +59,18 @@ pub fn require_role(principal: &Principal, allowed: &[Role]) -> Result<(), AuthE
 
 pub fn same_workspace(principal: &Principal, workspace_id: WorkspaceId) -> Result<(), AuthError> {
     if principal.workspace_id == workspace_id { Ok(()) } else { Err(AuthError::Forbidden) }
+}
+
+pub async fn authenticate(pool: &PgPool, headers: &HeaderMap) -> Result<Principal, AuthError> {
+    let credential = extract_bearer(headers)?;
+    let rows = sqlx::query_as::<_, (Uuid, Uuid, Uuid, Uuid, String, Vec<String>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)>(
+        "SELECT c.credential_id, c.workspace_id, a.environment_id, c.agent_id, c.secret_hash, c.scopes, c.expires_at, c.revoked_at FROM control.credentials c JOIN control.agents a ON a.agent_id = c.agent_id WHERE c.revoked_at IS NULL"
+    ).fetch_all(pool).await.map_err(|_| AuthError::Forbidden)?;
+    let row = rows.into_iter().find(|row| verify_credential(credential, &row.4).is_ok()).ok_or(AuthError::Forbidden)?;
+    let (credential_id, workspace_id, environment_id, agent_id, _secret_hash, scopes, expires_at, revoked_at) = row;
+    if revoked_at.is_some() || expires_at.is_some_and(|expiry| expiry <= chrono::Utc::now()) { return Err(AuthError::RevokedCredential); }
+    let roles = scopes.into_iter().filter_map(|scope| match scope.as_str() { "workspace:owner" => Some(Role::Owner), "security:admin" => Some(Role::SecurityAdmin), "agent:operate" => Some(Role::Operator), "approval:write" => Some(Role::Approver), "audit:read" => Some(Role::Auditor), _ => None }).collect();
+    Ok(Principal { credential_id, workspace_id, environment_id: Some(environment_id), agent_id: Some(agent_id), roles, revoked: false })
 }
 
 #[cfg(test)]

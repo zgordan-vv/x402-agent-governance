@@ -37,7 +37,7 @@ CREATE TABLE control.credentials (
     credential_id uuid PRIMARY KEY,
     workspace_id uuid NOT NULL REFERENCES control.workspaces(workspace_id),
     agent_id uuid NOT NULL REFERENCES control.agents(agent_id),
-    secret_hash bytea NOT NULL,
+    secret_hash text NOT NULL,
     scopes text[] NOT NULL,
     expires_at timestamptz,
     revoked_at timestamptz,
