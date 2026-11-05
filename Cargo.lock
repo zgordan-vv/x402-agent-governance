@@ -522,6 +522,7 @@ dependencies = [
  "chrono",
  "governance-core",
  "serde_json",
+ "sha2",
  "sqlx",
  "uuid",
 ]

@@ -38,6 +38,7 @@ pub struct EvaluateResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct SettlementRequest {
+    pub idempotency_key: String,
     pub decision_id: Uuid,
     pub status: SettlementStatus,
     pub transaction_signature: Option<String>,
@@ -54,7 +55,7 @@ pub enum SettlementStatus {
 
 #[derive(Debug, Deserialize)]
 pub struct ExportRequest {
-    pub project_id: Uuid,
+    pub environment_id: Option<Uuid>,
     pub privacy_profile: PrivacyProfile,
 }
 
@@ -92,6 +93,28 @@ pub struct AuditEventResponse {
 pub enum PrivacyProfile {
     Internal,
     Shareable,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApprovalDecisionRequest {
+    pub decision_id: Uuid,
+    pub approved: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FreezeWorkspaceRequest {
+    pub frozen: bool,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ApprovalResponse {
+    pub approval_id: Uuid,
+    pub decision_id: Uuid,
+    pub status: String,
+    pub requested_by: String,
+    pub decided_by: Option<String>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub decided_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[cfg(test)]

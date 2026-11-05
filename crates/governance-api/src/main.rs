@@ -1,7 +1,9 @@
 pub mod auth;
+pub mod evaluate;
 pub mod models;
 
 use axum::{
+    body::Body,
     extract::State,
     http::{HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
@@ -11,7 +13,9 @@ use axum::{
 };
 use governance_core::HealthStatus;
 use models::{
-    AgentResponse, AuditEventResponse, ErrorBody, ErrorEnvelope, PolicySummary, SettlementRequest,
+    AgentResponse, ApprovalDecisionRequest, ApprovalResponse, AuditEventResponse, ErrorBody,
+    ErrorEnvelope, ExportRequest, FreezeWorkspaceRequest, PolicySummary, PrivacyProfile,
+    SettlementRequest,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -30,6 +34,32 @@ async fn request_id(mut request: axum::extract::Request, next: Next) -> Response
         .unwrap_or_else(|| Uuid::now_v7().to_string());
     request.extensions_mut().insert(id.clone());
     let mut response = next.run(request).await;
+    if response.status().is_client_error() || response.status().is_server_error() {
+        let status = response.status();
+        let (code, message) = match status {
+            StatusCode::BAD_REQUEST => ("bad_request", "request is invalid"),
+            StatusCode::UNAUTHORIZED => ("unauthorized", "valid authentication is required"),
+            StatusCode::FORBIDDEN => ("forbidden", "operation is not permitted"),
+            StatusCode::NOT_FOUND => ("not_found", "resource was not found"),
+            StatusCode::CONFLICT => ("conflict", "request conflicts with current state"),
+            StatusCode::REQUEST_TIMEOUT => ("request_timeout", "request timed out"),
+            StatusCode::SERVICE_UNAVAILABLE => ("service_unavailable", "service is not ready"),
+            _ => ("internal_error", "request could not be completed"),
+        };
+        let body = serde_json::to_vec(&ErrorEnvelope {
+            error: ErrorBody {
+                code,
+                message,
+                request_id: id.clone(),
+            },
+        })
+        .expect("error envelope serializes");
+        *response.body_mut() = Body::from(body);
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+    }
     if let Ok(value) = HeaderValue::from_str(&id) {
         response.headers_mut().insert("x-request-id", value);
     }
@@ -43,17 +73,35 @@ async fn live() -> Json<HealthStatus> {
     })
 }
 
-async fn ready() -> Json<HealthStatus> {
-    Json(HealthStatus {
-        service: "governance-api".into(),
-        ready: true,
-    })
+async fn ready(State(pool): State<PgPool>) -> (StatusCode, Json<HealthStatus>) {
+    let ready = sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&pool)
+        .await
+        .is_ok();
+    (
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(HealthStatus {
+            service: "governance-api".into(),
+            ready,
+        }),
+    )
 }
 
 async fn openapi() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "openapi": "3.0.3", "info": {"title": "x402 Agent Spend Governance API", "version": env!("CARGO_PKG_VERSION")},
-        "paths": {"/health/live": {"get": {}}, "/health/ready": {"get": {}}, "/v1/me": {"get": {"security": [{"bearerAuth": []}]}}},
+        "paths": {
+            "/health/live":{"get":{}}, "/health/ready":{"get":{}}, "/v1/me":{"get":{"security":[{"bearerAuth":[]}]}},
+            "/v1/agents":{"get":{"security":[{"bearerAuth":[]}]}}, "/v1/policies":{"get":{"security":[{"bearerAuth":[]}]}},
+            "/v1/evaluate":{"post":{"security":[{"bearerAuth":[]}]}}, "/v1/settlements":{"post":{"security":[{"bearerAuth":[]}]}},
+            "/v1/approvals":{"get":{"security":[{"bearerAuth":[]}]},"post":{"security":[{"bearerAuth":[]}]}},
+            "/v1/audit/events":{"get":{"security":[{"bearerAuth":[]}]}}, "/v1/workspace/freeze":{"post":{"security":[{"bearerAuth":[]}]}},
+            "/v1/exports":{"post":{"security":[{"bearerAuth":[]}]}}
+        },
         "components": {"securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}}}
     }))
 }
@@ -116,23 +164,113 @@ async fn create_settlement(
     headers: HeaderMap,
     Json(request): Json<SettlementRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
+    if request.idempotency_key.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let principal = auth::authenticate(&pool, &headers)
         .await
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let intent_id: Option<Uuid> = sqlx::query_scalar("SELECT i.intent_id FROM payments.decisions d JOIN payments.payment_intents i ON i.intent_id = d.intent_id WHERE d.decision_id = $1 AND i.workspace_id = $2")
         .bind(request.decision_id).bind(principal.workspace_id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let intent_id = intent_id.ok_or(StatusCode::NOT_FOUND)?;
+    if let Some(existing) = sqlx::query_scalar::<_, Uuid>("SELECT settlement_id FROM payments.settlements WHERE decision_id=$1 AND evidence->>'idempotency_key'=$2")
+        .bind(request.decision_id).bind(&request.idempotency_key).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        return Ok((StatusCode::OK, Json(serde_json::json!({"settlement_id":existing,"idempotent_replay":true}))));
+    }
     let outcome = match request.status {
         models::SettlementStatus::Settled => "settled",
         models::SettlementStatus::Failed => "failed",
         models::SettlementStatus::Unknown => "unknown",
     };
     let id = Uuid::now_v7();
+    let mut evidence = request.evidence;
+    let object = evidence.as_object_mut().ok_or(StatusCode::BAD_REQUEST)?;
+    object.insert(
+        "idempotency_key".into(),
+        serde_json::Value::String(request.idempotency_key),
+    );
     let settlement_id: Uuid = sqlx::query_scalar("INSERT INTO payments.settlements (settlement_id, intent_id, decision_id, transaction_signature, facilitator_status, outcome, evidence) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (decision_id, transaction_signature) DO UPDATE SET evidence = payments.settlements.evidence RETURNING settlement_id")
-        .bind(id).bind(intent_id).bind(request.decision_id).bind(request.transaction_signature).bind(outcome).bind(outcome).bind(request.evidence).fetch_one(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .bind(id).bind(intent_id).bind(request.decision_id).bind(request.transaction_signature).bind(outcome).bind(outcome).bind(evidence).fetch_one(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({"settlement_id": settlement_id, "outcome": outcome})),
+    ))
+}
+
+async fn freeze_workspace(
+    State(pool): State<PgPool>,
+    headers: HeaderMap,
+    Json(request): Json<FreezeWorkspaceRequest>,
+) -> Result<StatusCode, StatusCode> {
+    let principal = auth::authenticate(&pool, &headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    auth::require_role(&principal, &[auth::Role::Owner, auth::Role::SecurityAdmin])
+        .map_err(|_| StatusCode::FORBIDDEN)?;
+    sqlx::query("UPDATE control.workspaces SET status = $1 WHERE workspace_id = $2")
+        .bind(if request.frozen { "frozen" } else { "active" })
+        .bind(principal.workspace_id)
+        .execute(&pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_approvals(
+    State(pool): State<PgPool>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ApprovalResponse>>, StatusCode> {
+    let principal = auth::authenticate(&pool, &headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    auth::require_role(
+        &principal,
+        &[auth::Role::Owner, auth::Role::Approver, auth::Role::Auditor],
+    )
+    .map_err(|_| StatusCode::FORBIDDEN)?;
+    let rows = sqlx::query_as::<_, ApprovalResponse>("SELECT a.approval_id, a.decision_id, a.status, a.requested_by, a.decided_by, a.expires_at, a.decided_at FROM payments.approvals a JOIN payments.decisions d ON d.decision_id = a.decision_id JOIN payments.payment_intents i ON i.intent_id = d.intent_id WHERE i.workspace_id = $1 ORDER BY a.expires_at ASC")
+        .bind(principal.workspace_id).fetch_all(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows))
+}
+
+async fn decide_approval(
+    State(pool): State<PgPool>,
+    headers: HeaderMap,
+    Json(request): Json<ApprovalDecisionRequest>,
+) -> Result<Json<ApprovalResponse>, StatusCode> {
+    let principal = auth::authenticate(&pool, &headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    auth::require_role(&principal, &[auth::Role::Owner, auth::Role::Approver])
+        .map_err(|_| StatusCode::FORBIDDEN)?;
+    let row = sqlx::query_as::<_, ApprovalResponse>("UPDATE payments.approvals a SET status = $1, decided_by = $2, decided_at = now() FROM payments.decisions d, payments.payment_intents i WHERE a.decision_id = $3 AND d.decision_id = a.decision_id AND i.intent_id = d.intent_id AND i.workspace_id = $4 AND a.status = 'pending' AND a.expires_at > now() RETURNING a.approval_id, a.decision_id, a.status, a.requested_by, a.decided_by, a.expires_at, a.decided_at")
+        .bind(if request.approved { "approved" } else { "denied" }).bind(principal.credential_id.to_string()).bind(request.decision_id).bind(principal.workspace_id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::CONFLICT)?;
+    Ok(Json(row))
+}
+
+async fn export_workspace(
+    State(pool): State<PgPool>,
+    headers: HeaderMap,
+    Json(request): Json<ExportRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let principal = auth::authenticate(&pool, &headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    auth::require_role(&principal, &[auth::Role::Owner, auth::Role::Auditor])
+        .map_err(|_| StatusCode::FORBIDDEN)?;
+    let intent_count: i64 = sqlx::query_scalar("SELECT count(*) FROM payments.payment_intents WHERE workspace_id = $1 AND ($2::uuid IS NULL OR environment_id = $2)").bind(principal.workspace_id).bind(request.environment_id).fetch_one(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let event_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit.events WHERE workspace_id = $1")
+            .bind(principal.workspace_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let profile = match request.privacy_profile {
+        PrivacyProfile::Internal => "internal",
+        PrivacyProfile::Shareable => "shareable",
+    };
+    Ok(Json(
+        serde_json::json!({"workspace_id": if profile == "internal" { Some(principal.workspace_id) } else { None }, "environment_id": request.environment_id, "privacy_profile": profile, "intent_count": intent_count, "audit_event_count": event_count, "generated_at": chrono::Utc::now()}),
     ))
 }
 
@@ -183,6 +321,10 @@ async fn main() {
         .route("/v1/policies", get(list_policies))
         .route("/v1/audit/events", get(list_audit_events))
         .route("/v1/settlements", post(create_settlement))
+        .route("/v1/workspace/freeze", post(freeze_workspace))
+        .route("/v1/approvals", get(list_approvals).post(decide_approval))
+        .route("/v1/exports", post(export_workspace))
+        .route("/v1/evaluate", post(evaluate::handler))
         .with_state(pool.clone())
         .layer(RequestBodyLimitLayer::new(256 * 1024))
         .layer(TimeoutLayer::with_status_code(
@@ -218,4 +360,96 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
     tokio::select! { _ = ctrl_c => {}, _ = terminate => {} }
     tracing::info!("shutdown signal received");
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use axum::extract::State;
+    use axum::http::HeaderValue;
+    use governance_core::AmountAtomic;
+
+    #[tokio::test]
+    async fn openapi_lists_every_phase_five_route() {
+        let Json(document) = openapi().await;
+        let paths = document["paths"].as_object().unwrap();
+        for path in [
+            "/v1/evaluate",
+            "/v1/settlements",
+            "/v1/agents",
+            "/v1/policies",
+            "/v1/approvals",
+            "/v1/audit/events",
+            "/v1/workspace/freeze",
+            "/v1/exports",
+        ] {
+            assert!(paths.contains_key(path), "missing OpenAPI path {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn evaluate_is_database_backed_and_idempotent() {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            return;
+        };
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .unwrap();
+        sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
+        let workspace = Uuid::now_v7();
+        let environment = Uuid::now_v7();
+        let agent = Uuid::now_v7();
+        let credential = Uuid::now_v7();
+        let policy = Uuid::now_v7();
+        sqlx::query("INSERT INTO control.workspaces(workspace_id,name) VALUES($1,'phase5-test')")
+            .bind(workspace)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO control.environments(environment_id,workspace_id,name) VALUES($1,$2,'test')").bind(environment).bind(workspace).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO control.agents(agent_id,workspace_id,environment_id,name) VALUES($1,$2,$3,'agent')").bind(agent).bind(workspace).bind(environment).execute(&pool).await.unwrap();
+        let secret = format!("phase5-{credential}");
+        let hash = auth::credential_hash(&secret).unwrap();
+        sqlx::query("INSERT INTO control.credentials(credential_id,workspace_id,agent_id,secret_hash,scopes) VALUES($1,$2,$3,$4,ARRAY['agent:operate'])").bind(credential).bind(workspace).bind(agent).bind(hash).execute(&pool).await.unwrap();
+        let rules = serde_json::json!({"per_payment_cap":"100","daily_cap":"1000","approval_threshold":null,"allowed_networks":["solana-devnet"],"allowed_assets":["USDC"],"merchants":[{"origin":"https://merchant.test","pay_to":"merchant","path_prefix":null}]});
+        sqlx::query("INSERT INTO policy.policy_versions(policy_id,version,workspace_id,environment_id,status,content_hash,rules,created_by,published_at) VALUES($1,1,$2,$3,'published',$4,$5,$6,now())").bind(policy).bind(workspace).bind(environment).bind(vec![1u8]).bind(rules).bind(credential).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO policy.active_policies(policy_id,workspace_id,environment_id,active_version) VALUES($1,$2,$3,1)").bind(policy).bind(workspace).bind(environment).execute(&pool).await.unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {secret}")).unwrap(),
+        );
+        let make_request = || models::EvaluateRequest {
+            idempotency_key: "same-key".into(),
+            agent_id: agent,
+            network: "solana-devnet".into(),
+            asset: "USDC".into(),
+            amount_atomic: AmountAtomic::new("10").unwrap(),
+            merchant_origin: "https://merchant.test".into(),
+            merchant_path_prefix: None,
+            pay_to: "merchant".into(),
+            request_hash: "sha256:test".into(),
+        };
+        let first = evaluate::handler(State(pool.clone()), headers.clone(), Json(make_request()))
+            .await
+            .unwrap()
+            .0;
+        let second = evaluate::handler(State(pool.clone()), headers, Json(make_request()))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(first.decision_id, second.decision_id);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM payments.payment_intents WHERE workspace_id=$1"
+            )
+            .bind(workspace)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            1
+        );
+    }
 }
