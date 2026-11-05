@@ -14,14 +14,20 @@ async fn lease_one(pool: &PgPool) -> Result<bool, sqlx::Error> {
         sqlx::query("UPDATE jobs.work_items SET status = CASE WHEN attempts >= 5 THEN 'dead_letter' ELSE 'retryable' END, available_at = now() + interval '30 seconds', lease_until = NULL, last_error = 'handler not registered', updated_at = now() WHERE job_id = $1")
             .bind(job_id).execute(pool).await?;
         Ok(true)
-    } else { Ok(false) }
+    } else {
+        Ok(false)
+    }
 }
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL is required");
-    let pool = PgPoolOptions::new().max_connections(5).acquire_timeout(Duration::from_secs(5)).connect_lazy(&database_url).expect("valid DATABASE_URL");
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_lazy(&database_url)
+        .expect("valid DATABASE_URL");
     let mut ticker = tokio::time::interval(Duration::from_secs(2));
     loop {
         tokio::select! {

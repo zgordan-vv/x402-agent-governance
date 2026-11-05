@@ -3,20 +3,52 @@
 use chrono::{DateTime, Utc};
 use governance_core::{AgentId, AmountAtomic, DecisionId, IntentId, PolicyId, WorkspaceId};
 use serde_json::Value;
-use sqlx::{PgPool, Postgres, Transaction};
 use sha2::{Digest, Sha256};
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 pub const STORAGE_STATUS: &str = "postgresql-ready";
 
 /// Computes the stable hash used by the append-only audit chain.
-pub fn audit_event_hash(previous_hash: Option<&[u8]>, aggregate_id: Uuid, sequence: i64, event_type: &str, payload: &Value, occurred_at: DateTime<Utc>) -> Vec<u8> {
-    let canonical = serde_json::to_vec(&(previous_hash, aggregate_id, sequence, event_type, payload, occurred_at.to_rfc3339())).expect("audit payload must serialize");
+pub fn audit_event_hash(
+    previous_hash: Option<&[u8]>,
+    aggregate_id: Uuid,
+    sequence: i64,
+    event_type: &str,
+    payload: &Value,
+    occurred_at: DateTime<Utc>,
+) -> Vec<u8> {
+    let canonical = serde_json::to_vec(&(
+        previous_hash,
+        aggregate_id,
+        sequence,
+        event_type,
+        payload,
+        occurred_at.to_rfc3339(),
+    ))
+    .expect("audit payload must serialize");
     Sha256::digest(canonical).to_vec()
 }
 
-pub fn verify_audit_event_hash(previous_hash: Option<&[u8]>, aggregate_id: Uuid, sequence: i64, event_type: &str, payload: &Value, occurred_at: DateTime<Utc>, expected: &[u8]) -> bool {
-    audit_event_hash(previous_hash, aggregate_id, sequence, event_type, payload, occurred_at).as_slice() == expected
+pub fn verify_audit_event_hash(
+    previous_hash: Option<&[u8]>,
+    aggregate_id: Uuid,
+    sequence: i64,
+    event_type: &str,
+    payload: &Value,
+    occurred_at: DateTime<Utc>,
+    expected: &[u8],
+) -> bool {
+    audit_event_hash(
+        previous_hash,
+        aggregate_id,
+        sequence,
+        event_type,
+        payload,
+        occurred_at,
+    )
+    .as_slice()
+        == expected
 }
 
 #[derive(Debug, Clone)]
@@ -46,8 +78,12 @@ pub struct Storage {
 }
 
 impl Storage {
-    pub fn new(pool: PgPool) -> Self { Self { pool } }
-    pub fn pool(&self) -> &PgPool { &self.pool }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
 
     /// Starts the transaction used by the evaluate-and-reserve command.
     /// The actual evaluator is injected by the API layer; this boundary owns locks and writes.
@@ -58,7 +94,8 @@ impl Storage {
 
 /// SQL fragments kept next to the repository to make the transaction contract explicit.
 pub mod queries {
-    pub const LOCK_AUDIT_AGGREGATE: &str = "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))";
+    pub const LOCK_AUDIT_AGGREGATE: &str =
+        "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))";
 
     pub const READ_AUDIT_TAIL: &str = "SELECT COALESCE(MAX(sequence), 0), (array_agg(event_hash ORDER BY sequence DESC))[1] FROM audit.events WHERE aggregate_id = $1";
 
@@ -105,11 +142,29 @@ mod tests {
     #[test]
     fn audit_hash_is_deterministic_and_detects_payload_changes() {
         let id = Uuid::from_u128(7);
-        let when = DateTime::parse_from_rfc3339("2026-11-05T00:00:00Z").unwrap().with_timezone(&Utc);
+        let when = DateTime::parse_from_rfc3339("2026-11-05T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let payload = serde_json::json!({"decision": "allow"});
         let hash = audit_event_hash(None, id, 1, "decision.created", &payload, when);
-        assert!(verify_audit_event_hash(None, id, 1, "decision.created", &payload, when, &hash));
-        assert!(!verify_audit_event_hash(None, id, 1, "decision.created", &serde_json::json!({"decision": "deny"}), when, &hash));
+        assert!(verify_audit_event_hash(
+            None,
+            id,
+            1,
+            "decision.created",
+            &payload,
+            when,
+            &hash
+        ));
+        assert!(!verify_audit_event_hash(
+            None,
+            id,
+            1,
+            "decision.created",
+            &serde_json::json!({"decision": "deny"}),
+            when,
+            &hash
+        ));
     }
 }
 
