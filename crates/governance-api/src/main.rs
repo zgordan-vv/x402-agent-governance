@@ -1,3 +1,5 @@
+pub mod auth;
+
 use axum::{routing::get, Json, Router};
 use governance_core::HealthStatus;
 use std::{env, net::SocketAddr};

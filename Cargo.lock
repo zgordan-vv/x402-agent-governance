@@ -457,7 +457,10 @@ dependencies = [
  "axum",
  "governance-core",
  "serde",
+ "sha2",
+ "thiserror",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
