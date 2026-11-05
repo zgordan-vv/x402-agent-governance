@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
 };
 use governance_core::HealthStatus;
-use models::{AgentResponse, ErrorBody, ErrorEnvelope, PolicySummary};
+use models::{AgentResponse, AuditEventResponse, ErrorBody, ErrorEnvelope, PolicySummary};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::{env, net::SocketAddr};
@@ -97,6 +97,18 @@ async fn list_policies(
     Ok(Json(policies))
 }
 
+async fn list_audit_events(
+    State(pool): State<PgPool>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<AuditEventResponse>>, StatusCode> {
+    let principal = auth::authenticate(&pool, &headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let events = sqlx::query_as::<_, AuditEventResponse>("SELECT event_id, aggregate_type, aggregate_id, sequence, event_type, payload, occurred_at, request_id FROM audit.events WHERE workspace_id = $1 ORDER BY occurred_at DESC LIMIT 100")
+        .bind(principal.workspace_id).fetch_all(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(events))
+}
+
 async fn not_found(
     axum::extract::Extension(request_id): axum::extract::Extension<String>,
 ) -> (StatusCode, Json<ErrorEnvelope>) {
@@ -142,6 +154,7 @@ async fn main() {
         .route("/v1/me", get(me))
         .route("/v1/agents", get(list_agents))
         .route("/v1/policies", get(list_policies))
+        .route("/v1/audit/events", get(list_audit_events))
         .with_state(pool.clone())
         .layer(RequestBodyLimitLayer::new(256 * 1024))
         .layer(TimeoutLayer::with_status_code(

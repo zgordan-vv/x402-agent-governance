@@ -75,6 +75,18 @@ pub struct PolicySummary {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct AuditEventResponse {
+    pub event_id: Uuid,
+    pub aggregate_type: String,
+    pub aggregate_id: Uuid,
+    pub sequence: i64,
+    pub event_type: String,
+    pub payload: serde_json::Value,
+    pub occurred_at: chrono::DateTime<chrono::Utc>,
+    pub request_id: String,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrivacyProfile {
