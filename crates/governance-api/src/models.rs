@@ -66,6 +66,15 @@ pub struct AgentResponse {
     pub status: String,
 }
 
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct PolicySummary {
+    pub policy_id: Uuid,
+    pub version: i32,
+    pub environment_id: Uuid,
+    pub status: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrivacyProfile {
