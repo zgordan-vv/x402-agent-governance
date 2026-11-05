@@ -8,3 +8,5 @@ license.workspace = true
 chrono.workspace = true
 governance-core = { path = "../governance-core" }
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "uuid", "chrono", "json"] }
+serde_json.workspace = true
+uuid.workspace = true

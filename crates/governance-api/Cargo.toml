@@ -8,8 +8,9 @@ license.workspace = true
 axum.workspace = true
 argon2.workspace = true
 governance-core = { path = "../governance-core" }
-sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "uuid", "chrono", "json", "migrate"] }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "uuid", "chrono", "json", "migrate", "macros"] }
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tower-http = { version = "0.6", features = ["timeout", "limit"] }
 uuid.workspace = true

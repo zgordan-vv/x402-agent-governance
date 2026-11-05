@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-governance}
       POSTGRES_USER: ${POSTGRES_USER:-governance}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
       - "5433:5432"
     volumes:
@@ -23,7 +23,7 @@ services:
     environment:
       APP_HOST: 0.0.0.0
       APP_PORT: 8080
-      DATABASE_URL: postgres://${POSTGRES_USER:-governance}:${POSTGRES_PASSWORD:-change-me-local-only}@postgres:5432/${POSTGRES_DB:-governance}
+      DATABASE_URL: postgres://${POSTGRES_USER:-governance}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-governance}
     ports:
       - "8080:8080"
     depends_on:

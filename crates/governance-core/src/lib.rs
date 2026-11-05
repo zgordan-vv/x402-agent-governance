@@ -75,8 +75,8 @@ pub enum DecisionOutcome { Allow, Deny, ApprovalRequired }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ReasonCode { WithinBudgetAndAllowlist, InvalidCredential, MerchantNotAllowlisted, PerPaymentLimitExceeded, DailyBudgetExceeded, PolicyUnavailable, ApprovalRequired }
-impl ReasonCode { pub fn as_str(&self) -> &'static str { match self { Self::WithinBudgetAndAllowlist => "within_budget_and_allowlist", Self::InvalidCredential => "invalid_credential", Self::MerchantNotAllowlisted => "merchant_not_allowlisted", Self::PerPaymentLimitExceeded => "per_payment_limit_exceeded", Self::DailyBudgetExceeded => "daily_budget_exceeded", Self::PolicyUnavailable => "policy_unavailable", Self::ApprovalRequired => "approval_required" } } }
+pub enum ReasonCode { WithinBudgetAndAllowlist, InvalidCredential, MerchantNotAllowlisted, NetworkNotAllowed, AssetNotAllowed, PerPaymentLimitExceeded, DailyBudgetExceeded, PolicyUnavailable, WorkspaceFrozen, ApprovalRequired }
+impl ReasonCode { pub fn as_str(&self) -> &'static str { match self { Self::WithinBudgetAndAllowlist => "within_budget_and_allowlist", Self::InvalidCredential => "invalid_credential", Self::MerchantNotAllowlisted => "merchant_not_allowlisted", Self::NetworkNotAllowed => "network_not_allowed", Self::AssetNotAllowed => "asset_not_allowed", Self::PerPaymentLimitExceeded => "per_payment_limit_exceeded", Self::DailyBudgetExceeded => "daily_budget_exceeded", Self::PolicyUnavailable => "policy_unavailable", Self::WorkspaceFrozen => "workspace_frozen", Self::ApprovalRequired => "approval_required" } } }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PaymentIntentInput { pub agent_id: AgentId, pub merchant: MerchantIdentity, pub network: Network, pub asset: Asset, pub amount_atomic: AmountAtomic, pub request_hash: String }
@@ -141,10 +141,9 @@ pub struct EvaluationResult { pub outcome: DecisionOutcome, pub reason_code: Rea
 pub fn evaluate(context: &EvaluationContext) -> Result<EvaluationResult, DomainError> {
     context.intent.validate()?;
     context.policy.validate()?;
-    if context.frozen { return Ok(EvaluationResult { outcome: DecisionOutcome::Deny, reason_code: ReasonCode::PolicyUnavailable }); }
-    if !context.policy.allowed_networks.contains(&context.intent.network) || !context.policy.allowed_assets.contains(&context.intent.asset) {
-        return Ok(EvaluationResult { outcome: DecisionOutcome::Deny, reason_code: ReasonCode::MerchantNotAllowlisted });
-    }
+    if context.frozen { return Ok(EvaluationResult { outcome: DecisionOutcome::Deny, reason_code: ReasonCode::WorkspaceFrozen }); }
+    if !context.policy.allowed_networks.contains(&context.intent.network) { return Ok(EvaluationResult { outcome: DecisionOutcome::Deny, reason_code: ReasonCode::NetworkNotAllowed }); }
+    if !context.policy.allowed_assets.contains(&context.intent.asset) { return Ok(EvaluationResult { outcome: DecisionOutcome::Deny, reason_code: ReasonCode::AssetNotAllowed }); }
     if !context.policy.merchants.iter().any(|merchant| merchant.matches(&context.intent.merchant)) {
         return Ok(EvaluationResult { outcome: DecisionOutcome::Deny, reason_code: ReasonCode::MerchantNotAllowlisted });
     }

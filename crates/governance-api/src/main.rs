@@ -1,6 +1,7 @@
 pub mod auth;
 
-use axum::{routing::get, Json, Router};
+use axum::{http::StatusCode, routing::get, Json, Router};
+use tower_http::{limit::RequestBodyLimitLayer, timeout::TimeoutLayer};
 use governance_core::HealthStatus;
 use sqlx::postgres::PgPoolOptions;
 use std::{env, net::SocketAddr};
@@ -21,7 +22,10 @@ async fn main() {
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL is required");
     let pool = PgPoolOptions::new().max_connections(10).acquire_timeout(std::time::Duration::from_secs(5)).connect(&database_url).await.expect("connect to PostgreSQL");
     sqlx::migrate!("../../migrations").run(&pool).await.expect("run database migrations");
-    let app = Router::new().route("/health/live", get(live)).route("/health/ready", get(ready));
+    let app = Router::new().route("/health/live", get(live)).route("/health/ready", get(ready))
+        .layer(RequestBodyLimitLayer::new(256 * 1024))
+        .layer(TimeoutLayer::with_status_code(std::time::Duration::from_secs(10), StatusCode::REQUEST_TIMEOUT))
+        .fallback(|| async { (StatusCode::NOT_FOUND, "not found") });
     let listener = tokio::net::TcpListener::bind(address).await.expect("bind API listener");
     println!("governance-api listening on {address}");
     axum::serve(listener, app).await.expect("serve API");

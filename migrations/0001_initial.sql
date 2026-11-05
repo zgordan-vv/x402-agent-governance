@@ -18,7 +18,8 @@ CREATE TABLE control.environments (
     name text NOT NULL,
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'frozen', 'deleted')),
     created_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (workspace_id, name)
+    UNIQUE (workspace_id, name),
+    UNIQUE (workspace_id, environment_id)
 );
 
 CREATE TABLE control.agents (
@@ -28,7 +29,8 @@ CREATE TABLE control.agents (
     name text NOT NULL,
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'frozen', 'revoked')),
     created_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (workspace_id, environment_id, name)
+    UNIQUE (workspace_id, environment_id, name),
+    FOREIGN KEY (workspace_id, environment_id) REFERENCES control.environments(workspace_id, environment_id)
 );
 
 CREATE TABLE control.credentials (
@@ -153,6 +155,10 @@ CREATE TABLE payments.settlements (
     created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (decision_id, transaction_signature)
 );
+
+CREATE UNIQUE INDEX settlements_decision_idempotency_idx
+    ON payments.settlements (decision_id, (evidence->>'idempotency_key'))
+    WHERE evidence->>'idempotency_key' IS NOT NULL;
 
 CREATE TABLE audit.events (
     event_id uuid PRIMARY KEY,
