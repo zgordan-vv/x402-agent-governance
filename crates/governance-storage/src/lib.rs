@@ -47,6 +47,20 @@ impl Storage {
 
 /// SQL fragments kept next to the repository to make the transaction contract explicit.
 pub mod queries {
+    pub const RESERVE_BUDGET: &str = r#"
+        UPDATE payments.budget_counters
+        SET reserved_atomic = reserved_atomic + $4
+        WHERE workspace_id = $1 AND agent_id = $2 AND window_start = $3
+          AND reserved_atomic + $4 <= limit_atomic
+        RETURNING reserved_atomic, limit_atomic
+    "#;
+
+    pub const INSERT_RESERVATION: &str = r#"
+        INSERT INTO payments.budget_reservations
+          (reservation_id, decision_id, amount_atomic, status, expires_at)
+        VALUES ($1, $2, $3, 'reserved', $4)
+    "#;
+
     pub const LOCK_BUDGET_COUNTER: &str = r#"
         SELECT agent_id, window_start, reserved_atomic, limit_atomic
         FROM payments.budget_counters

@@ -183,3 +183,26 @@ CREATE INDEX decisions_outcome_created_idx ON payments.decisions (outcome, creat
 CREATE INDEX settlements_decision_created_idx ON payments.settlements (decision_id, created_at DESC);
 CREATE INDEX audit_workspace_occurred_idx ON audit.events (workspace_id, occurred_at DESC);
 CREATE INDEX audit_aggregate_sequence_idx ON audit.events (aggregate_id, sequence);
+
+CREATE OR REPLACE FUNCTION policy.reject_published_mutation() RETURNS trigger AS $$
+BEGIN
+    IF OLD.status IN ('published', 'superseded', 'frozen') THEN
+        RAISE EXCEPTION 'published policy versions are immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER policy_versions_immutable
+    BEFORE UPDATE OR DELETE ON policy.policy_versions
+    FOR EACH ROW EXECUTE FUNCTION policy.reject_published_mutation();
+
+CREATE OR REPLACE FUNCTION audit.reject_mutation() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'audit events are append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER audit_events_append_only
+    BEFORE UPDATE OR DELETE ON audit.events
+    FOR EACH ROW EXECUTE FUNCTION audit.reject_mutation();
