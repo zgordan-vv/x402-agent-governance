@@ -1,5 +1,7 @@
 //! Domain types and canonical protocol primitives.
 
+pub mod token;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fmt, str::FromStr};
@@ -79,6 +81,9 @@ impl Network {
         }
         Ok(Self(value.trim().to_ascii_lowercase()))
     }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +96,9 @@ impl Asset {
             return Err(DomainError::EmptyAsset);
         }
         Ok(Self(value.trim().to_ascii_uppercase()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

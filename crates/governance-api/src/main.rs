@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod evaluate;
 pub mod models;
+pub mod tokens;
 
 use axum::{
     body::Body,
@@ -100,7 +101,9 @@ async fn openapi() -> Json<serde_json::Value> {
             "/v1/evaluate":{"post":{"security":[{"bearerAuth":[]}]}}, "/v1/settlements":{"post":{"security":[{"bearerAuth":[]}]}},
             "/v1/approvals":{"get":{"security":[{"bearerAuth":[]}]},"post":{"security":[{"bearerAuth":[]}]}},
             "/v1/audit/events":{"get":{"security":[{"bearerAuth":[]}]}}, "/v1/workspace/freeze":{"post":{"security":[{"bearerAuth":[]}]}},
-            "/v1/exports":{"post":{"security":[{"bearerAuth":[]}]}}
+            "/v1/exports":{"post":{"security":[{"bearerAuth":[]}]}},
+            "/.well-known/governance-keys.json":{"get":{}},
+            "/v1/decision-tokens/consume":{"post":{"security":[{"bearerAuth":[]}]}}
         },
         "components": {"securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}}}
     }))
@@ -325,6 +328,11 @@ async fn main() {
         .route("/v1/approvals", get(list_approvals).post(decide_approval))
         .route("/v1/exports", post(export_workspace))
         .route("/v1/evaluate", post(evaluate::handler))
+        .route(
+            "/.well-known/governance-keys.json",
+            get(tokens::public_keys),
+        )
+        .route("/v1/decision-tokens/consume", post(tokens::consume))
         .with_state(pool.clone())
         .layer(RequestBodyLimitLayer::new(256 * 1024))
         .layer(TimeoutLayer::with_status_code(
@@ -382,6 +390,8 @@ mod contract_tests {
             "/v1/audit/events",
             "/v1/workspace/freeze",
             "/v1/exports",
+            "/.well-known/governance-keys.json",
+            "/v1/decision-tokens/consume",
         ] {
             assert!(paths.contains_key(path), "missing OpenAPI path {path}");
         }
@@ -392,6 +402,11 @@ mod contract_tests {
         let Ok(url) = std::env::var("DATABASE_URL") else {
             return;
         };
+        std::env::set_var("DECISION_KEY_ID", "phase6-test");
+        std::env::set_var(
+            "DECISION_SIGNING_KEY_B64",
+            "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
+        );
         let pool = PgPoolOptions::new()
             .max_connections(2)
             .connect(&url)
@@ -421,6 +436,7 @@ mod contract_tests {
             "authorization",
             HeaderValue::from_str(&format!("Bearer {secret}")).unwrap(),
         );
+        let quote_expires_at = chrono::Utc::now() + chrono::Duration::minutes(1);
         let make_request = || models::EvaluateRequest {
             idempotency_key: "same-key".into(),
             agent_id: agent,
@@ -431,16 +447,48 @@ mod contract_tests {
             merchant_path_prefix: None,
             pay_to: "merchant".into(),
             request_hash: "sha256:test".into(),
+            quote_expires_at,
         };
         let first = evaluate::handler(State(pool.clone()), headers.clone(), Json(make_request()))
             .await
             .unwrap()
             .0;
-        let second = evaluate::handler(State(pool.clone()), headers, Json(make_request()))
+        let second = evaluate::handler(State(pool.clone()), headers.clone(), Json(make_request()))
             .await
             .unwrap()
             .0;
         assert_eq!(first.decision_id, second.decision_id);
+        let token = first.decision_token.clone().unwrap();
+        let intent_hash = String::from_utf8(
+            sqlx::query_scalar::<_, Vec<u8>>(
+                "SELECT intent_hash FROM payments.payment_intents WHERE intent_id=$1",
+            )
+            .bind(first.intent_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        let verify = || models::VerifyDecisionTokenRequest {
+            token: token.clone(),
+            intent_hash: intent_hash.clone(),
+            network: "solana-devnet".into(),
+            asset: "USDC".into(),
+            amount_atomic: "10".into(),
+            pay_to: "merchant".into(),
+            quote_expires_at,
+        };
+        assert!(
+            tokens::consume(State(pool.clone()), headers.clone(), Json(verify()))
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            tokens::consume(State(pool.clone()), headers, Json(verify()))
+                .await
+                .unwrap_err(),
+            StatusCode::CONFLICT
+        );
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT count(*) FROM payments.payment_intents WHERE workspace_id=$1"

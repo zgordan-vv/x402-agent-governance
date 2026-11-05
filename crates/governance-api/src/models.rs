@@ -25,6 +25,7 @@ pub struct EvaluateRequest {
     pub merchant_path_prefix: Option<String>,
     pub pay_to: String,
     pub request_hash: String,
+    pub quote_expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -34,6 +35,19 @@ pub struct EvaluateResponse {
     pub outcome: DecisionOutcome,
     pub reason_code: ReasonCode,
     pub expires_at: chrono::DateTime<chrono::Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerifyDecisionTokenRequest {
+    pub token: String,
+    pub intent_hash: String,
+    pub network: String,
+    pub asset: String,
+    pub amount_atomic: String,
+    pub pay_to: String,
+    pub quote_expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Deserialize)]
