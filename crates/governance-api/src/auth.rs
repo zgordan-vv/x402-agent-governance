@@ -1,6 +1,6 @@
 use axum::http::HeaderMap;
 use governance_core::{AgentId, EnvironmentId, WorkspaceId};
-use sha2::{Digest, Sha256};
+use argon2::{password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString}, Argon2};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -39,9 +39,16 @@ pub fn extract_bearer(headers: &HeaderMap) -> Result<&str, AuthError> {
     Ok(credential.trim())
 }
 
-pub fn credential_hash(credential: &str) -> Result<[u8; 32], AuthError> {
+pub fn credential_hash(credential: &str) -> Result<String, AuthError> {
     if credential.trim().is_empty() { return Err(AuthError::EmptyCredential); }
-    Ok(Sha256::digest(credential.as_bytes()).into())
+    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+    Ok(Argon2::default().hash_password(credential.as_bytes(), &salt).map_err(|_| AuthError::InvalidScheme)?.to_string())
+}
+
+pub fn verify_credential(credential: &str, encoded_hash: &str) -> Result<(), AuthError> {
+    if credential.trim().is_empty() { return Err(AuthError::EmptyCredential); }
+    let parsed = PasswordHash::new(encoded_hash).map_err(|_| AuthError::InvalidScheme)?;
+    Argon2::default().verify_password(credential.as_bytes(), &parsed).map_err(|_| AuthError::Forbidden)
 }
 
 pub fn require_role(principal: &Principal, allowed: &[Role]) -> Result<(), AuthError> {
@@ -62,7 +69,7 @@ mod tests {
 
     #[test] fn extracts_bearer_case_insensitively() { let mut headers = HeaderMap::new(); headers.insert("authorization", HeaderValue::from_static("Bearer secret")); assert_eq!(extract_bearer(&headers).unwrap(), "secret"); }
     #[test] fn rejects_missing_or_wrong_scheme() { let headers = HeaderMap::new(); assert_eq!(extract_bearer(&headers), Err(AuthError::MissingAuthorization)); let mut headers = HeaderMap::new(); headers.insert("authorization", HeaderValue::from_static("Basic secret")); assert_eq!(extract_bearer(&headers), Err(AuthError::InvalidScheme)); }
-    #[test] fn hashes_without_returning_plaintext() { assert_ne!(credential_hash("secret").unwrap(), [0; 32]); assert_eq!(credential_hash("secret"), credential_hash("secret")); }
+    #[test] fn hashes_and_verifies_with_argon2id() { let hash = credential_hash("secret").unwrap(); assert!(hash.starts_with("$argon2")); assert!(verify_credential("secret", &hash).is_ok()); assert_eq!(verify_credential("wrong", &hash), Err(AuthError::Forbidden)); }
     #[test] fn role_and_tenant_checks_fail_closed() { let value = principal(); assert!(require_role(&value, &[Role::Operator]).is_ok()); assert_eq!(require_role(&value, &[Role::Owner]), Err(AuthError::Forbidden)); assert_eq!(same_workspace(&value, Uuid::from_u128(2)), Err(AuthError::Forbidden)); }
     #[test] fn revoked_principal_cannot_access_any_role() { let mut value = principal(); value.revoked = true; assert_eq!(require_role(&value, &[Role::Operator]), Err(AuthError::RevokedCredential)); }
 }
