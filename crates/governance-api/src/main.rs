@@ -77,6 +77,21 @@ async fn me(
     ))
 }
 
+async fn not_found(
+    axum::extract::Extension(request_id): axum::extract::Extension<String>,
+) -> (StatusCode, Json<ErrorEnvelope>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(ErrorEnvelope {
+            error: ErrorBody {
+                code: "not_found",
+                message: "route not found",
+                request_id,
+            },
+        }),
+    )
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -112,7 +127,7 @@ async fn main() {
             std::time::Duration::from_secs(10),
         ))
         .layer(middleware::from_fn(request_id))
-        .fallback(|| async { (StatusCode::NOT_FOUND, "not found") });
+        .fallback(not_found);
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .expect("bind API listener");
