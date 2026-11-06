@@ -38,6 +38,10 @@ services:
       context: .
       dockerfile: Dockerfile
       target: worker
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-governance}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-governance}
+      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}
+      DB_ACQUIRE_TIMEOUT_MS: ${DB_ACQUIRE_TIMEOUT_MS:-5000}
     depends_on:
       postgres:
         condition: service_healthy
