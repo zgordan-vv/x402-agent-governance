@@ -45,6 +45,10 @@ async fn request_id(mut request: axum::extract::Request, next: Next) -> Response
             StatusCode::CONFLICT => ("conflict", "request conflicts with current state"),
             StatusCode::REQUEST_TIMEOUT => ("request_timeout", "request timed out"),
             StatusCode::SERVICE_UNAVAILABLE => ("service_unavailable", "service is not ready"),
+            StatusCode::UNPROCESSABLE_ENTITY => (
+                "unprocessable_entity",
+                "request failed validation, including an expired quote",
+            ),
             _ => ("internal_error", "request could not be completed"),
         };
         let body = serde_json::to_vec(&ErrorEnvelope {
