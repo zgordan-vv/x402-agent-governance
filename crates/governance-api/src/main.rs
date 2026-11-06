@@ -298,19 +298,15 @@ async fn export_workspace(
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
     auth::require_role(&principal, &[auth::Role::Owner, auth::Role::Auditor])
         .map_err(|_| StatusCode::FORBIDDEN)?;
-    let intent_count: i64 = sqlx::query_scalar("SELECT count(*) FROM payments.payment_intents WHERE workspace_id = $1 AND ($2::uuid IS NULL OR environment_id = $2)").bind(principal.workspace_id).bind(request.environment_id).fetch_one(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let event_count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM audit.events WHERE workspace_id = $1")
-            .bind(principal.workspace_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let profile = match request.privacy_profile {
         PrivacyProfile::Internal => "internal",
         PrivacyProfile::Shareable => "shareable",
     };
+    let export_id = Uuid::now_v7();
+    sqlx::query("INSERT INTO jobs.work_items(job_id,job_type,payload) VALUES($1,'export_generation',$2)")
+        .bind(Uuid::now_v7()).bind(serde_json::json!({"export_id":export_id,"workspace_id":principal.workspace_id,"environment_id":request.environment_id,"privacy_profile":profile})).execute(&pool).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(
-        serde_json::json!({"workspace_id": if profile == "internal" { Some(principal.workspace_id) } else { None }, "environment_id": request.environment_id, "privacy_profile": profile, "intent_count": intent_count, "audit_event_count": event_count, "generated_at": chrono::Utc::now()}),
+        serde_json::json!({"export_id":export_id,"status":"queued","privacy_profile":profile}),
     ))
 }
 

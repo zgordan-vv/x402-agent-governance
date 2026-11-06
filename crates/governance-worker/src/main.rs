@@ -8,11 +8,54 @@ fn backoff_seconds(attempt: i32) -> i32 {
 }
 
 async fn ensure_maintenance_jobs(pool: &PgPool) -> Result<(), sqlx::Error> {
-    for job_type in ["approval_expiry", "reservation_expiry"] {
+    for job_type in [
+        "approval_expiry",
+        "reservation_expiry",
+        "retention_cleanup",
+        "metric_rollup",
+    ] {
         sqlx::query("INSERT INTO jobs.work_items(job_id,job_type,payload) VALUES($1,$2,jsonb_build_object('scope','global')) ON CONFLICT DO NOTHING")
             .bind(uuid::Uuid::now_v7()).bind(job_type).execute(pool).await?;
     }
     Ok(())
+}
+
+async fn retention_cleanup(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM payments.decision_token_nonces WHERE expires_at < now() - interval '1 day'",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("DELETE FROM jobs.work_items WHERE status IN ('complete','dead_letter') AND updated_at < now() - interval '30 days'").execute(pool).await?;
+    Ok(())
+}
+
+async fn metric_rollup(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO jobs.metric_rollups(workspace_id,bucket_start,decisions_total,settlements_total,unknown_settlements) SELECT w.workspace_id,date_trunc('hour',now()),(SELECT count(*) FROM payments.decisions d JOIN payments.payment_intents i ON i.intent_id=d.intent_id WHERE i.workspace_id=w.workspace_id),(SELECT count(*) FROM payments.settlements s JOIN payments.payment_intents i ON i.intent_id=s.intent_id WHERE i.workspace_id=w.workspace_id),(SELECT count(*) FROM payments.settlements s JOIN payments.payment_intents i ON i.intent_id=s.intent_id WHERE i.workspace_id=w.workspace_id AND s.outcome IN ('unknown','mismatch')) FROM control.workspaces w ON CONFLICT(workspace_id,bucket_start) DO UPDATE SET decisions_total=EXCLUDED.decisions_total,settlements_total=EXCLUDED.settlements_total,unknown_settlements=EXCLUDED.unknown_settlements").execute(pool).await?;
+    Ok(())
+}
+
+async fn generate_export(pool: &PgPool, payload: &serde_json::Value) -> Result<bool, sqlx::Error> {
+    let Some(export_id) = payload
+        .get("export_id")
+        .and_then(|v| v.as_str())
+        .and_then(|v| uuid::Uuid::parse_str(v).ok())
+    else {
+        return Ok(false);
+    };
+    let Some(workspace_id) = payload
+        .get("workspace_id")
+        .and_then(|v| v.as_str())
+        .and_then(|v| uuid::Uuid::parse_str(v).ok())
+    else {
+        return Ok(false);
+    };
+    let profile = payload
+        .get("privacy_profile")
+        .and_then(|v| v.as_str())
+        .unwrap_or("shareable");
+    sqlx::query("INSERT INTO jobs.export_artifacts(export_id,workspace_id,status,privacy_profile,payload) VALUES($1,$2,'ready',$3,$4) ON CONFLICT DO NOTHING").bind(export_id).bind(workspace_id).bind(profile).bind(payload).execute(pool).await?;
+    Ok(true)
 }
 
 async fn expire_approvals(pool: &PgPool) -> Result<(), sqlx::Error> {
@@ -75,6 +118,15 @@ async fn dispatch(
             expire_reservations(pool).await?;
             Ok(true)
         }
+        "retention_cleanup" => {
+            retention_cleanup(pool).await?;
+            Ok(true)
+        }
+        "metric_rollup" => {
+            metric_rollup(pool).await?;
+            Ok(true)
+        }
+        "export_generation" => generate_export(pool, payload).await,
         "settlement_reconciliation" => reconcile_settlement(pool, payload).await,
         _ => Ok(false),
     }
