@@ -94,6 +94,15 @@ async fn live() -> Json<HealthStatus> {
     })
 }
 
+async fn index() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "service": "x402-agent-governance",
+        "status": "running",
+        "health": "/health/ready",
+        "openapi": "/openapi.json"
+    }))
+}
+
 async fn ready(State(pool): State<PgPool>) -> (StatusCode, Json<HealthStatus>) {
     let ready = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&pool)
@@ -374,6 +383,7 @@ async fn main() {
         .await
         .expect("run database migrations");
     let app = Router::new()
+        .route("/", get(index))
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
         .route("/openapi.json", get(openapi))
