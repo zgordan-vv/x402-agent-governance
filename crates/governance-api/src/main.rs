@@ -331,8 +331,11 @@ async fn export_workspace(
 }
 
 async fn not_found(
-    axum::extract::Extension(request_id): axum::extract::Extension<String>,
+    request_id: Option<axum::extract::Extension<String>>,
 ) -> (StatusCode, Json<ErrorEnvelope>) {
+    let request_id = request_id
+        .map(|axum::extract::Extension(value)| value)
+        .unwrap_or_else(|| Uuid::now_v7().to_string());
     (
         StatusCode::NOT_FOUND,
         Json(ErrorEnvelope {
