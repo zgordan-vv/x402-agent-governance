@@ -358,9 +358,11 @@ async fn main() {
         .parse()
         .expect("valid APP_HOST/APP_PORT");
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL is required");
+    let max_connections=env::var("DB_MAX_CONNECTIONS").ok().and_then(|v|v.parse().ok()).unwrap_or(10);
+    let acquire_timeout_ms=env::var("DB_ACQUIRE_TIMEOUT_MS").ok().and_then(|v|v.parse().ok()).unwrap_or(5000);
     let pool = PgPoolOptions::new()
-        .max_connections(10)
-        .acquire_timeout(std::time::Duration::from_secs(5))
+        .max_connections(max_connections)
+        .acquire_timeout(std::time::Duration::from_millis(acquire_timeout_ms))
         .connect(&database_url)
         .await
         .expect("connect to PostgreSQL");
