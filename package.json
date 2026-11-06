@@ -6,6 +6,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "node --experimental-strip-types --test packages/x402-governance-sdk/src/index.test.js",
-    "load-test": "node scripts/load-test.mjs"
+    "load-test": "node scripts/load-test.mjs",
+    "devnet:preflight": "node scripts/devnet-preflight.mjs"
   }
 }
