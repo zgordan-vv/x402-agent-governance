@@ -4,7 +4,7 @@ The repository provides a production Compose overlay, but it is not a hosted ser
 
 ## Deploy
 
-Create a deployment-only `.env` with strong values for `POSTGRES_PASSWORD`, `DECISION_KEY_ID`, and `DECISION_SIGNING_KEY_B64`. If another service already uses host port 8080, set `API_BIND_PORT=8082`. Then run:
+Create a deployment-only `.env` with strong values for `POSTGRES_PASSWORD`, `DECISION_KEY_ID`, and `DECISION_SIGNING_KEY_B64`. If another service already uses host port 8080, set `API_BIND_PORT=8082`. Run Compose with `--env-file .env` so the selected ports and secrets are explicit.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build

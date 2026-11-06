@@ -1,7 +1,8 @@
 services:
   postgres:
     restart: unless-stopped
-    ports: []
+    ports:
+      - "127.0.0.1:${POSTGRES_BIND_PORT:-5434}:5432"
   api:
     restart: unless-stopped
     ports:
