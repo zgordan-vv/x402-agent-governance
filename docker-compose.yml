@@ -49,5 +49,16 @@ services:
     volumes:
       - .:/workspace:ro
 
+  sandbox:
+    image: node:20-alpine
+    working_dir: /workspace/apps/sandbox
+    command: ["node", "src/server.mjs"]
+    ports:
+      - "8090:8090"
+    environment:
+      PORT: 8090
+    volumes:
+      - .:/workspace:ro
+
 volumes:
   governance-postgres:

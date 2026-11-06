@@ -10,4 +10,6 @@ importers:
 
   apps/dashboard: {}
 
+  apps/sandbox: {}
+
   packages/x402-governance-sdk: {}
