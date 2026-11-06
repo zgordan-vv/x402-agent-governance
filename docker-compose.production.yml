@@ -5,7 +5,7 @@ services:
   api:
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${API_BIND_PORT:-8080}:8080"
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
