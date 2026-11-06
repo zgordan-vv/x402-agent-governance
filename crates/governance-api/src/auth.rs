@@ -7,6 +7,10 @@ use governance_core::{AgentId, EnvironmentId, WorkspaceId};
 use sqlx::PgPool;
 use thiserror::Error;
 use uuid::Uuid;
+use std::sync::OnceLock;
+use tokio::sync::Semaphore;
+
+static AUTH_SLOTS: OnceLock<Semaphore> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -60,6 +64,13 @@ pub fn extract_bearer(headers: &HeaderMap) -> Result<&str, AuthError> {
     Ok(credential.trim())
 }
 
+fn split_credential(value: &str) -> Result<(Uuid, &str), AuthError> {
+    let (id, secret) = value.split_once('.').ok_or(AuthError::InvalidScheme)?;
+    let id = Uuid::parse_str(id).map_err(|_| AuthError::InvalidScheme)?;
+    if secret.is_empty() { return Err(AuthError::EmptyCredential); }
+    Ok((id, secret))
+}
+
 pub fn credential_hash(credential: &str) -> Result<String, AuthError> {
     if credential.trim().is_empty() {
         return Err(AuthError::EmptyCredential);
@@ -101,14 +112,15 @@ pub fn same_workspace(principal: &Principal, workspace_id: WorkspaceId) -> Resul
 }
 
 pub async fn authenticate(pool: &PgPool, headers: &HeaderMap) -> Result<Principal, AuthError> {
-    let credential = extract_bearer(headers)?;
-    let rows = sqlx::query_as::<_, (Uuid, Uuid, Uuid, Uuid, String, Vec<String>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)>(
-        "SELECT c.credential_id, c.workspace_id, a.environment_id, c.agent_id, c.secret_hash, c.scopes, c.expires_at, c.revoked_at FROM control.credentials c JOIN control.agents a ON a.agent_id = c.agent_id WHERE c.revoked_at IS NULL"
-    ).fetch_all(pool).await.map_err(|_| AuthError::Forbidden)?;
-    let row = rows
-        .into_iter()
-        .find(|row| verify_credential(credential, &row.4).is_ok())
-        .ok_or(AuthError::Forbidden)?;
+    let raw = extract_bearer(headers)?;
+    let (credential_id, credential) = split_credential(raw)?;
+    let row = sqlx::query_as::<_, (Uuid, Uuid, Uuid, Uuid, String, Vec<String>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)>(
+        "SELECT c.credential_id, c.workspace_id, a.environment_id, c.agent_id, c.secret_hash, c.scopes, c.expires_at, c.revoked_at FROM control.credentials c JOIN control.agents a ON a.agent_id = c.agent_id WHERE c.credential_id=$1"
+    ).bind(credential_id).fetch_optional(pool).await.map_err(|_| AuthError::Forbidden)?.ok_or(AuthError::Forbidden)?;
+    let slot = AUTH_SLOTS.get_or_init(|| Semaphore::new(32)).acquire().await.map_err(|_| AuthError::Forbidden)?;
+    let result = verify_credential(credential, &row.4);
+    drop(slot);
+    result?;
     let (
         credential_id,
         workspace_id,

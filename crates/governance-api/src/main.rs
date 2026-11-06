@@ -480,7 +480,7 @@ mod contract_tests {
             .unwrap();
         sqlx::query("INSERT INTO control.environments(environment_id,workspace_id,name) VALUES($1,$2,'test')").bind(environment).bind(workspace).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO control.agents(agent_id,workspace_id,environment_id,name) VALUES($1,$2,$3,'agent')").bind(agent).bind(workspace).bind(environment).execute(&pool).await.unwrap();
-        let secret = format!("phase5-{credential}");
+        let secret = "phase5-secret".to_owned();
         let hash = auth::credential_hash(&secret).unwrap();
         sqlx::query("INSERT INTO control.credentials(credential_id,workspace_id,agent_id,secret_hash,scopes) VALUES($1,$2,$3,$4,ARRAY['agent:operate'])").bind(credential).bind(workspace).bind(agent).bind(hash).execute(&pool).await.unwrap();
         let rules = serde_json::json!({"per_payment_cap":"100","daily_cap":"1000","approval_threshold":null,"allowed_networks":["solana-devnet"],"allowed_assets":["USDC"],"merchants":[{"origin":"https://merchant.test","pay_to":"merchant","path_prefix":null}]});
@@ -489,7 +489,7 @@ mod contract_tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "authorization",
-            HeaderValue::from_str(&format!("Bearer {secret}")).unwrap(),
+            HeaderValue::from_str(&format!("Bearer {credential}.{secret}")).unwrap(),
         );
         let quote_expires_at = chrono::Utc::now() + chrono::Duration::minutes(1);
         let make_request = || models::EvaluateRequest {

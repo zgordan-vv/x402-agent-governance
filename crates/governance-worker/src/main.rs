@@ -26,12 +26,12 @@ async fn retention_cleanup(pool: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    sqlx::query("DELETE FROM jobs.work_items WHERE status IN ('complete','dead_letter') AND updated_at < now() - interval '30 days'").execute(pool).await?;
+    sqlx::query("DELETE FROM jobs.work_items WHERE job_id IN (SELECT job_id FROM jobs.work_items WHERE status IN ('complete','dead_letter') AND updated_at < now() - interval '30 days' ORDER BY updated_at LIMIT 1000)").execute(pool).await?;
     Ok(())
 }
 
 async fn metric_rollup(pool: &PgPool) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO jobs.metric_rollups(workspace_id,bucket_start,decisions_total,settlements_total,unknown_settlements) SELECT w.workspace_id,date_trunc('hour',now()),(SELECT count(*) FROM payments.decisions d JOIN payments.payment_intents i ON i.intent_id=d.intent_id WHERE i.workspace_id=w.workspace_id),(SELECT count(*) FROM payments.settlements s JOIN payments.payment_intents i ON i.intent_id=s.intent_id WHERE i.workspace_id=w.workspace_id),(SELECT count(*) FROM payments.settlements s JOIN payments.payment_intents i ON i.intent_id=s.intent_id WHERE i.workspace_id=w.workspace_id AND s.outcome IN ('unknown','mismatch')) FROM control.workspaces w ON CONFLICT(workspace_id,bucket_start) DO UPDATE SET decisions_total=EXCLUDED.decisions_total,settlements_total=EXCLUDED.settlements_total,unknown_settlements=EXCLUDED.unknown_settlements").execute(pool).await?;
+    sqlx::query("INSERT INTO jobs.metric_rollups(workspace_id,bucket_start,decisions_total,settlements_total,unknown_settlements) SELECT w.workspace_id,date_trunc('hour',now()),(SELECT count(*) FROM payments.decisions d JOIN payments.payment_intents i ON i.intent_id=d.intent_id WHERE i.workspace_id=w.workspace_id AND d.created_at >= date_trunc('hour',now())),(SELECT count(*) FROM payments.settlements s JOIN payments.payment_intents i ON i.intent_id=s.intent_id WHERE i.workspace_id=w.workspace_id AND s.created_at >= date_trunc('hour',now())),(SELECT count(*) FROM payments.settlements s JOIN payments.payment_intents i ON i.intent_id=s.intent_id WHERE i.workspace_id=w.workspace_id AND s.created_at >= date_trunc('hour',now()) AND s.outcome IN ('unknown','mismatch')) FROM control.workspaces w ON CONFLICT(workspace_id,bucket_start) DO UPDATE SET decisions_total=EXCLUDED.decisions_total,settlements_total=EXCLUDED.settlements_total,unknown_settlements=EXCLUDED.unknown_settlements").execute(pool).await?;
     Ok(())
 }
 
@@ -153,9 +153,11 @@ async fn lease_one(pool: &PgPool) -> Result<bool, sqlx::Error> {
 async fn main() {
     tracing_subscriber::fmt().init();
     let url = env::var("DATABASE_URL").expect("DATABASE_URL is required");
+    let max_connections = env::var("DB_MAX_CONNECTIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let acquire_timeout_ms = env::var("DB_ACQUIRE_TIMEOUT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5000);
     let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(Duration::from_secs(5))
+        .max_connections(max_connections)
+        .acquire_timeout(Duration::from_millis(acquire_timeout_ms))
         .connect_lazy(&url)
         .expect("valid DATABASE_URL");
     let mut ticker = tokio::time::interval(Duration::from_secs(2));
