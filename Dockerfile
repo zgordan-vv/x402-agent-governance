@@ -2,6 +2,7 @@ FROM rust:1.90-bookworm AS builder
 WORKDIR /workspace
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
+COPY migrations ./migrations
 RUN cargo build --release -p governance-api -p governance-worker
 
 FROM debian:bookworm-slim AS api
