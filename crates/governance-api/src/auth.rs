@@ -54,6 +54,9 @@ pub fn extract_bearer(headers: &HeaderMap) -> Result<&str, AuthError> {
     if credential.trim().is_empty() {
         return Err(AuthError::EmptyCredential);
     }
+    if credential.len() > 512 {
+        return Err(AuthError::InvalidScheme);
+    }
     Ok(credential.trim())
 }
 
@@ -171,6 +174,13 @@ mod tests {
         );
         let mut headers = HeaderMap::new();
         headers.insert("authorization", HeaderValue::from_static("Basic secret"));
+        assert_eq!(extract_bearer(&headers), Err(AuthError::InvalidScheme));
+    }
+    #[test]
+    fn rejects_oversized_bearer_credentials() {
+        let mut headers = HeaderMap::new();
+        let value = format!("Bearer {}", "x".repeat(513));
+        headers.insert("authorization", HeaderValue::from_str(&value).unwrap());
         assert_eq!(extract_bearer(&headers), Err(AuthError::InvalidScheme));
     }
     #[test]
