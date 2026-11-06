@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-governance}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_BIND_PORT:-5433}:5432"
     volumes:
       - governance-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -28,7 +28,7 @@ services:
       DECISION_SIGNING_KEY_B64: ${DECISION_SIGNING_KEY_B64:?Set DECISION_SIGNING_KEY_B64 in .env}
       DECISION_OLD_PUBLIC_KEYS_JSON: ${DECISION_OLD_PUBLIC_KEYS_JSON:-{}}
     ports:
-      - "8080:8080"
+      - "${API_BIND_HOST:-127.0.0.1}:${API_BIND_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
