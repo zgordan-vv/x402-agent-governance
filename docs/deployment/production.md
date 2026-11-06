@@ -16,7 +16,7 @@ The production overlay binds the API to localhost, removes the PostgreSQL host p
 
 ## TLS and network controls
 
-Terminate HTTPS at the reverse proxy, forward only `/health` and API routes needed by the dashboard, and restrict PostgreSQL to the Compose network. Do not expose port 5432 publicly. Use a firewall/security group to allow only HTTPS and administrative SSH from trusted addresses.
+The current MVP deployment uses the existing host reverse proxy at `https://x402.codehummus.com`, forwarding to the private API listener on `127.0.0.1:8082`. Terminate HTTPS at the reverse proxy, forward only `/health` and API routes needed by the dashboard, and restrict PostgreSQL to the Compose network. Do not expose port 5432 publicly. Use a firewall/security group to allow only HTTPS and administrative SSH from trusted addresses.
 
 ## Backups and restore rehearsal
 
