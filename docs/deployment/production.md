@@ -32,3 +32,16 @@ Store encrypted backups outside the host and test restores before releases. Keep
 ## Release and rollback
 
 Build an immutable image tag from the Git commit, run migrations and smoke tests, then deploy. Keep the previous image tag available for rollback. Never roll back the database schema independently of the application migration compatibility window.
+## Preflight validation
+
+Before starting the production Compose profile, load secrets into the shell or
+an approved secret manager and run:
+
+```bash
+pnpm production:preflight
+docker compose -f docker-compose.yml -f docker-compose.production.yml config >/dev/null
+docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+```
+
+The preflight checks required variables and the signing-key shape without
+printing secret values. It intentionally does not create or rotate secrets.
