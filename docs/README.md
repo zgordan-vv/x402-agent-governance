@@ -12,4 +12,6 @@ Operations: [deployment](deployment/production.md), [reliability](performance/re
 
 Acceptance status: [production acceptance report](operations/acceptance-report.md).
 
+Pilot materials: [onboarding](pilot/onboarding.md) and [support checklist](pilot/support-checklist.md).
+
 Architecture decisions are indexed in [ADR index](adr/index.md).
