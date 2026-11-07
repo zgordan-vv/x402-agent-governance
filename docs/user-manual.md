@@ -47,6 +47,16 @@ For a browser view, start the sandbox and open
 outcome, and latency. The page is intentionally local and does not write to
 the hosted audit ledger.
 
+To run a second isolated environment for comparison:
+
+```bash
+STAGING_SOLANA_RPC_URL=https://api.testnet.solana.com \
+  docker compose --profile staging up --build sandbox-staging
+```
+
+Open <http://127.0.0.1:8091/demo>. The staging sandbox uses a different
+environment name and merchant recipient and is isolated from port `8090`.
+
 ### Hosted API integration
 
 The API contract is available at `GET /openapi.json`. A protected client needs a scoped agent credential in the format issued by the workspace administrator. The credential must be sent as:

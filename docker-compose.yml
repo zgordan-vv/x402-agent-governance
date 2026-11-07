@@ -64,5 +64,19 @@ services:
     volumes:
       - .:/workspace:ro
 
+  sandbox-staging:
+    profiles: ["staging"]
+    image: node:20-alpine
+    working_dir: /workspace/apps/sandbox
+    command: ["node", "src/server.mjs"]
+    ports:
+      - "8091:8090"
+    environment:
+      PORT: 8090
+      SANDBOX_ENVIRONMENT: staging
+      SOLANA_RPC_URL: ${STAGING_SOLANA_RPC_URL:-https://api.testnet.solana.com}
+    volumes:
+      - .:/workspace:ro
+
 volumes:
   governance-postgres:
