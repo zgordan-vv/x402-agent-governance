@@ -2,10 +2,11 @@
 
 Start here:
 
-1. [Sandbox quickstart](quickstart.md)
-2. [SDK integration](sdk-guide.md)
-3. [Policy cookbook](policy-cookbook.md)
-4. [API reference](api-reference.md)
+1. [User manual](user-manual.md)
+2. [Sandbox quickstart](quickstart.md)
+3. [SDK integration](sdk-guide.md)
+4. [Policy cookbook](policy-cookbook.md)
+5. [API reference](api-reference.md)
 
 Operations: [deployment](deployment/production.md), [reliability](performance/reliability-runbook.md), [incident response](operations/incident-response.md), and [security questionnaire](security/questionnaire.md).
 
