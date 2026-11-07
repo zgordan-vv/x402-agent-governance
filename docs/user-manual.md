@@ -33,6 +33,15 @@ curl -s -X POST http://127.0.0.1:8090/v1/merchant/quote \
 
 Use the sandbox to test allow, deny, facilitator rejection, timeout, duplicate, and mismatch behavior before connecting a wallet or RPC.
 
+To run the complete deterministic demo matrix in one command:
+
+```bash
+pnpm demo:sandbox
+```
+
+It prints `settled`, `rejected`, `mismatch`, and `unknown` results. The runner
+uses the local sandbox only and never sends a blockchain transaction.
+
 ### Hosted API integration
 
 The API contract is available at `GET /openapi.json`. A protected client needs a scoped agent credential in the format issued by the workspace administrator. The credential must be sent as:
