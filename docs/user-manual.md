@@ -57,6 +57,15 @@ STAGING_SOLANA_RPC_URL=https://api.testnet.solana.com \
 Open <http://127.0.0.1:8091/demo>. The staging sandbox uses a different
 environment name and merchant recipient and is isolated from port `8090`.
 
+With both environments running, compare their deterministic outcomes:
+
+```bash
+pnpm demo:compare
+```
+
+The command checks the same success, rejection, and mismatch scenarios in both
+environments and fails if their outcomes diverge.
+
 ### Hosted API integration
 
 The API contract is available at `GET /openapi.json`. A protected client needs a scoped agent credential in the format issued by the workspace administrator. The credential must be sent as:

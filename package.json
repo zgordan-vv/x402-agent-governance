@@ -8,6 +8,7 @@
     "test": "node --experimental-strip-types --test packages/x402-governance-sdk/src/index.test.js",
     "load-test": "node scripts/load-test.mjs",
     "demo:sandbox": "node scripts/sandbox-demo.mjs",
+    "demo:compare": "node scripts/compare-sandboxes.mjs",
     "devnet:preflight": "node scripts/devnet-preflight.mjs",
     "backup:postgres": "./scripts/backup-postgres.sh"
   }
