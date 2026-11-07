@@ -8,7 +8,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -105,6 +105,18 @@ async fn index() -> Json<serde_json::Value> {
         "health": "/health/ready",
         "openapi": "/openapi.json"
     }))
+}
+
+async fn metrics() -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; version=0.0.4"),
+    );
+    (
+        headers,
+        "# HELP governance_api_up API process health\n# TYPE governance_api_up gauge\ngovernance_api_up 1\n",
+    )
 }
 
 async fn ready(State(pool): State<PgPool>) -> (StatusCode, Json<HealthStatus>) {
@@ -388,6 +400,7 @@ async fn main() {
         .expect("run database migrations");
     let app = Router::new()
         .route("/", get(index))
+        .route("/metrics", get(metrics))
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
         .route("/openapi.json", get(openapi))
