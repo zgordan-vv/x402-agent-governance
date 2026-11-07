@@ -10,4 +10,6 @@ Start here:
 
 Operations: [deployment](deployment/production.md), [reliability](performance/reliability-runbook.md), [incident response](operations/incident-response.md), and [security questionnaire](security/questionnaire.md).
 
+Acceptance status: [production acceptance report](operations/acceptance-report.md).
+
 Architecture decisions are indexed in [ADR index](adr/index.md).
