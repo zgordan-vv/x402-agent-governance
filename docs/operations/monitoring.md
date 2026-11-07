@@ -15,4 +15,8 @@ up{job="x402-api"}
 governance_api_up{job="x402-api"}
 ```
 
-Both should be `1`. The current scrape target uses the x402 API container address on the shared Docker network; if the API container is recreated and its address changes, update the target and reload Prometheus. A follow-up should move this to a stable Docker network alias or service discovery.
+Both should be `1`. The Compose stack now uses the explicitly named
+`x402-governance-private` network, and the API is addressable by the stable
+service DNS name `api` from a Prometheus container attached to that network.
+Prefer `api:8080` over a container IP; container IPs can change whenever the
+service is recreated.

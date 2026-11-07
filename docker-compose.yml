@@ -80,3 +80,7 @@ services:
 
 volumes:
   governance-postgres:
+
+networks:
+  default:
+    name: x402-governance-private
