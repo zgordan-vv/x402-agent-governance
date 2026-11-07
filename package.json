@@ -10,6 +10,7 @@
     "demo:sandbox": "node scripts/sandbox-demo.mjs",
     "demo:compare": "node scripts/compare-sandboxes.mjs",
     "production:preflight": "node scripts/validate-production-env.mjs",
+    "production:smoke": "node scripts/production-smoke.mjs",
     "devnet:preflight": "node scripts/devnet-preflight.mjs",
     "backup:postgres": "./scripts/backup-postgres.sh"
   }

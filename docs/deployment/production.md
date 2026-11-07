@@ -45,3 +45,12 @@ docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --bu
 
 The preflight checks required variables and the signing-key shape without
 printing secret values. It intentionally does not create or rotate secrets.
+
+After the API is reachable, run the read-only smoke test:
+
+```bash
+GOVERNANCE_URL=https://x402.example.com pnpm production:smoke
+```
+
+It verifies liveness, readiness, the Prometheus health metric, and the
+versioned OpenAPI route.
